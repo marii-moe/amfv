@@ -10,6 +10,7 @@ dependencies = []
 dev = [
     "amfv-datasets",
     "amfv-decomposer",
+    "amfv-eval",
     "amfv-search",
     "amfv-utils",
     "amfv-verifier",
@@ -23,6 +24,7 @@ package = false
 [tool.uv.sources]
 amfv-datasets = { workspace = true }
 amfv-decomposer = { workspace = true }
+amfv-eval = { workspace = true }
 amfv-search = { workspace = true }
 amfv-utils = { workspace = true }
 amfv-verifier = { workspace = true }
@@ -31,6 +33,7 @@ amfv-verifier = { workspace = true }
 members = [
     "datasets",
     "decomposer",
+    "decomposer/eval",
     "search",
     "utils",
     "verifier",
@@ -44,6 +47,7 @@ exclude = [
 testpaths = [
     "datasets/test",
     "decomposer/test",
+    "decomposer/eval/test",
     "search/test",
     "utils/test",
     "verifier/test",
