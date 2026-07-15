@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import json
+import urllib.request
 from collections import defaultdict
+from pathlib import Path
 from typing import Literal
 
 from amfv_eval.types import ClaimGroup, ScifactClaim
 
 __all__ = ["load_claims", "group_claims"]
 
-_SPLIT_MAP = {
-    "train": "train",
-    "validation": "validation",
-    "test": "test",
+_GITHUB_BASES = [
+    "https://raw.githubusercontent.com/allenai/scifact/main/data",
+    "https://raw.githubusercontent.com/allenai/scifact/master/data",
+]
+_SPLIT_FILES: dict[str, str] = {
+    "train": "claims_train.jsonl",
+    "validation": "claims_dev.jsonl",
+    "test": "claims_test.jsonl",
 }
+_CACHE_DIR = Path.home() / ".cache" / "amfv_eval" / "scifact"
 
 _LABEL_MAP = {
     "SUPPORTS": "SUPPORTED",
@@ -25,37 +33,29 @@ _LABEL_MAP = {
 }
 
 
-def load_claims(split: Literal["train", "validation", "test"]) -> list[ScifactClaim]:
-    """Load SciFact claims for a split from HuggingFace.
+def load_claims(
+    split: Literal["train", "validation", "test"],
+    *,
+    data_dir: Path | None = None,
+) -> list[ScifactClaim]:
+    """Load SciFact claims for a split.
 
     Args:
         split: One of ``train``, ``validation``, or ``test``.
+        data_dir: Directory containing the SciFact JSONL files.  When
+            provided the files are read directly from there without any
+            network access.  When omitted the files are downloaded from
+            GitHub and cached in ``~/.cache/amfv_eval/scifact/``.
 
     Returns:
         List of :class:`ScifactClaim` objects.
     """
-    try:
-        import datasets as hf_datasets
-    except ImportError as e:
-        raise ImportError(
-            "The 'datasets' package is required. Install it with: uv add datasets"
-        ) from e
-
-    ds = hf_datasets.load_dataset("allenai/scifact", "claims", split=split, trust_remote_code=True)
-
+    path = _local_path(split, data_dir) if data_dir else _cached_path(split)
     claims: list[ScifactClaim] = []
-    for row in ds:
-        evidence = row.get("evidence") or {}
-        if isinstance(evidence, str):
-            import json
-
-            evidence = json.loads(evidence)
-
+    for row in _iter_jsonl(path):
+        evidence: dict = row.get("evidence") or {}
         cited_doc_ids: list[int] = [int(d) for d in (row.get("cited_doc_ids") or [])]
-
-        # Derive veracity label from evidence
         label = _infer_label(evidence, row.get("label"))
-
         claims.append(
             ScifactClaim(
                 id=int(row["id"]),
@@ -66,7 +66,6 @@ def load_claims(split: Literal["train", "validation", "test"]) -> list[ScifactCl
                 label=label,
             )
         )
-
     return claims
 
 
@@ -86,13 +85,51 @@ def group_claims(claims: list[ScifactClaim]) -> list[ClaimGroup]:
     """
     if not claims:
         return []
+    return _buckets_to_groups(_bucket_by_parent(claims))
 
-    buckets = _bucket_by_parent(claims)
 
-    return _buckets_to_groups(buckets)
+def _local_path(split: Literal["train", "validation", "test"], data_dir: Path) -> Path:
+    """Resolve a split file from a user-supplied directory."""
+    filename = _SPLIT_FILES[split]
+    path = data_dir / filename
+    if not path.exists():
+        raise FileNotFoundError(
+            f"SciFact {split} file not found at {path}. "
+            f"Expected filename: {filename}"
+        )
+    return path
+
+
+def _cached_path(split: Literal["train", "validation", "test"]) -> Path:
+    """Return local path to the split file, downloading if absent."""
+    filename = _SPLIT_FILES[split]
+    local = _CACHE_DIR / filename
+    if not local.exists():
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Downloading SciFact {split} split from GitHub…", flush=True)
+        for base in _GITHUB_BASES:
+            try:
+                urllib.request.urlretrieve(f"{base}/{filename}", local)
+                return local
+            except urllib.error.HTTPError:
+                continue
+        raise RuntimeError(
+            f"Could not download SciFact {split} split from GitHub. "
+            "Check your internet connection or place the file manually at: "
+            f"{local}"
+        )
+    return local
+
+
+def _iter_jsonl(path: Path):
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                yield json.loads(line)
+
 
 def _bucket_by_parent(claims: list[ScifactClaim]) -> dict[int, list[ScifactClaim]]:
-    """Group claims by their connected component parent ID."""
     claim_ids = [c.id for c in claims]
     parent: dict[int, int] = {cid: cid for cid in claim_ids}
 
@@ -123,8 +160,8 @@ def _bucket_by_parent(claims: list[ScifactClaim]) -> dict[int, list[ScifactClaim
 
     return buckets
 
+
 def _buckets_to_groups(buckets: dict[int, list[ScifactClaim]]) -> list[ClaimGroup]:
-    """Convert claim ID bucketed by parent to ClaimGroup objects."""
     groups: list[ClaimGroup] = []
     for members in buckets.values():
         if len(members) < 2:
@@ -134,15 +171,14 @@ def _buckets_to_groups(buckets: dict[int, list[ScifactClaim]]) -> list[ClaimGrou
         )
         split = members[0].split
         groups.append(ClaimGroup(claims=tuple(members), doc_ids=all_doc_ids, split=split))
-
     groups.sort(key=lambda g: len(g.claims), reverse=True)
     return groups
+
 
 def _infer_label(
     evidence: dict,
     raw_label: str | None,
 ) -> Literal["SUPPORTED", "REFUTED", "NEI"]:
-    """Derive a single veracity label from evidence or explicit label field."""
     if raw_label:
         mapped = _LABEL_MAP.get(raw_label.upper())
         if mapped:
@@ -161,7 +197,6 @@ def _infer_label(
     if not labels:
         return "NEI"
 
-    # CONTRADICT dominates; otherwise SUPPORTS
     if any(lb in ("CONTRADICT", "REFUTED") for lb in labels):
         return "REFUTED"
     return "SUPPORTED"

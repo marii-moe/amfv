@@ -107,6 +107,7 @@ class EvalExample:
     source_claims: list[ScifactClaim]
     n_operators: int = field(init=False)
     thinking_trace: str = ""
+    context_sentences: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.n_operators = len(self.operators)
@@ -120,6 +121,7 @@ class EvalExample:
             "operators": self.operators,
             "n_operators": self.n_operators,
             "gold_atoms": self.gold_atoms,
+            "context_sentences": self.context_sentences,
             "source_claims": [
                 {
                     "id": c.id,
