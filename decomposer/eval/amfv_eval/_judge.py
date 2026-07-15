@@ -57,6 +57,12 @@ sentences as atomic claims.
 Context sentences are background, methodological, or framing statements that a \
 correct decomposer should NOT extract — they are not independently verifiable facts.
 
+Examples of context sentences:
+  - "Regulatory T cells are central to immune homeostasis."
+  - "This study used a murine model of experimental autoimmune encephalomyelitis."
+  - "The role of transcription factors in T cell differentiation has been extensively studied."
+  - "Participants were recruited from a tertiary care centre between 2010 and 2015."
+
 For each context sentence, output true if it was extracted as an atomic claim \
 (i.e., any extracted atom is semantically equivalent to or subsumes it), \
 false otherwise.

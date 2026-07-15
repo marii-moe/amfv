@@ -47,9 +47,12 @@ paraphrase: change word order, substitute synonyms, restructure sentences, and v
 the level of specificity — as long as every factual claim from the seeds is preserved \
 exactly.  Do not add, remove, or alter any fact.  Weave in 1–2 short context \
 sentences that provide background framing or methodological detail but do NOT \
-themselves make a new verifiable factual claim (e.g. "Regulatory T cells are central \
-to immune homeostasis." or "This study used a murine model.").  These context \
-sentences should read as a natural part of the passage.
+themselves make a new verifiable factual claim.  These context sentences should read \
+as a natural part of the passage.
+
+Example context sentences (illustrative only — do not reuse these verbatim):
+  - "Regulatory T cells are central to immune homeostasis."
+  - "This study used a murine model of experimental autoimmune encephalomyelitis."
 
 2. Return GOLD_ATOMS — the complete, minimal set of atomic claims that a perfect \
 decomposer must extract from the passage:
@@ -66,9 +69,8 @@ one additional relational atom capturing the new logical link introduced.
 the passage.  A correct decomposer must NOT extract these as atomic claims.
 
 Rules:
-- Every entity must be named explicitly. Never write "the drug", "the treatment", \
-"it" etc. without first establishing the referent—use the specific name.
-- Keep the passage to 2–4 sentences.
+
+- Keep the passage to 6–8 sentences.
 - Each atom must be a standalone, grammatically complete declarative sentence.
 - Do not hallucinate facts not present in the seed claims.
 - Respond with valid JSON matching this schema exactly:
