@@ -72,6 +72,7 @@ def _evaluate_examples(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
+    enable_thinking: bool = False,
 ) -> list[dict]:
     """Decompose each passage and judge atoms + operator awareness.
 
@@ -83,13 +84,17 @@ def _evaluate_examples(
         client: OpenAI-compatible client.
         model: Model to use for decomposition and judging.
         cache: Disk cache.
+        enable_thinking: Forward ``enable_thinking`` to the decompose call.
 
     Returns:
         Same records with a new evaluation appended.
     """
     results = []
     for ex in tqdm(examples, desc="evaluating", unit="ex"):
-        atoms, trace = decompose(ex["passage"], client=client, model=model, cache=cache)
+        atoms, trace = decompose(
+            ex["passage"], client=client, model=model, cache=cache,
+            enable_thinking=enable_thinking,
+        )
         atom_covered = judge_atoms(
             ex["gold_atoms"], atoms, client=client, model=model, cache=cache
         )
@@ -205,6 +210,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             client=client,
             model=args.model,
             cache=cache,
+            enable_thinking=args.enable_thinking,
         )
 
         split_pass = [r for r in records if r["passed"]]
@@ -235,7 +241,7 @@ def _cmd_filter(args: argparse.Namespace) -> None:
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Evaluating with {args.model}…", flush=True)
-    records = _evaluate_examples(examples, client=client, model=args.model, cache=cache)
+    records = _evaluate_examples(examples, client=client, model=args.model, cache=cache, enable_thinking=args.enable_thinking)
 
     passed = [r for r in records if r["passed"]]
     failed = [r for r in records if not r["passed"]]
@@ -274,6 +280,15 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
         help="Output JSONL for failing examples (optional).",
     )
     p.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
+    p.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        default=False,
+        help=(
+            "Pass enable_thinking=True to the vLLM server during decomposition. "
+            "Required for models that disable extended thinking by default."
+        ),
+    )
 
 
 def main(argv: list[str] | None = None) -> None:

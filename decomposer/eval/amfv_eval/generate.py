@@ -27,6 +27,7 @@ from tqdm import tqdm
 from pydantic import BaseModel, Field
 
 from amfv_eval._cache import GenerationCache
+from amfv_eval._utils import extract_json
 from amfv_eval.operators import NON_RELATION_OPERATORS, OPERATORS, RELATION_OPERATORS
 from amfv_eval.types import ClaimGroup, EvalExample, ScifactClaim
 
@@ -73,6 +74,21 @@ Rules:
 - Keep the passage to 6–8 sentences.
 - Each atom must be a standalone, grammatically complete declarative sentence.
 - Do not hallucinate facts not present in the seed claims.
+
+Operator reference:
+
+Non-Relation Adding (no new relational fact introduced):
+  coreference_fusion    — "Aspirin reduces inflammation, and it also thins the blood."
+  apposition            — "BRCA1, a tumor suppressor gene, is located on chromosome 17."
+  relative_clause       — "The drug, which targets EGFR, was approved in 2015."
+  conjunction_reduction — "The treatment lowered blood pressure and cholesterol."
+  ellipsis              — "Group A received the vaccine, and Group B the placebo."
+
+Relation Adding (each introduces one new relational fact):
+  causal      — "The tumor shrank because the drug inhibited EGFR."
+  contrastive — "Group A improved, whereas Group B declined."
+  temporal    — "The patient received the vaccine and developed immunity later."
+
 - Respond with valid JSON matching this schema exactly:
   {
     "passage": "<fused passage with context woven in>",
@@ -179,11 +195,10 @@ def generate_example(
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
                 max_tokens=2048,
             )
             content = response.choices[0].message.content or ""
-            output = _LLMOutput.model_validate_json(content)
+            output = _LLMOutput.model_validate_json(extract_json(content))
         except Exception:
             return None
 

@@ -8,6 +8,7 @@ import openai
 from pydantic import BaseModel, Field
 
 from amfv_eval._cache import GenerationCache
+from amfv_eval._utils import extract_json
 
 __all__ = ["decompose"]
 
@@ -30,6 +31,7 @@ def decompose(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
+    enable_thinking: bool = False,
 ) -> tuple[list[str], str]:
     """Decompose a passage into atomic claims.
 
@@ -38,16 +40,19 @@ def decompose(
         client: OpenAI-compatible client pointed at a vLLM server.
         model: Model name.
         cache: Disk cache.
+        enable_thinking: Pass ``enable_thinking=True`` in the request body for
+            vLLM models that require it to produce a reasoning trace.
 
     Returns:
         Tuple of ``(extracted_atoms, thinking_trace)``.  Returns ``([], "")``
         on failure.
     """
-    cache_key = cache.key("decompose", model, passage)
+    cache_key = cache.key("decompose", model, passage, str(enable_thinking))
     cached = cache.get(cache_key)
     if cached is not None:
         return cached["atoms"], cached.get("thinking_trace", "")
 
+    extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
     try:
         response = client.chat.completions.create(
             model=model,
@@ -55,13 +60,13 @@ def decompose(
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": f"Passage: {passage}"},
             ],
-            response_format={"type": "json_object"},
             max_tokens=1024,
+            extra_body=extra,
         )
         raw = response.choices[0].message.content or ""
+        print(f"[decompose] {raw}", flush=True)
         thinking = _extract_thinking(response, raw)
-        clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-        atoms = _Output.model_validate_json(clean).atoms
+        atoms = _Output.model_validate_json(extract_json(raw)).atoms
     except Exception:
         return [], ""
 

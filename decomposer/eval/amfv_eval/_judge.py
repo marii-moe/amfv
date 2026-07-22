@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from amfv_eval._cache import GenerationCache
 from amfv_eval.operators import get_operator
+from amfv_eval._utils import extract_json
 
 __all__ = ["judge_atoms", "judge_operators", "judge_context_extraction"]
 
@@ -125,11 +126,10 @@ def judge_atoms(
                 {"role": "system", "content": _ATOM_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            response_format={"type": "json_object"},
             max_tokens=256,
         )
         content = response.choices[0].message.content or ""
-        covered = _AtomOutput.model_validate_json(content).atom_covered
+        covered = _AtomOutput.model_validate_json(extract_json(content)).atom_covered
         # Align to gold length in case the model under/over-counts
         covered = (covered + [False] * len(gold_atoms))[: len(gold_atoms)]
     except Exception:
@@ -179,11 +179,10 @@ def judge_operators(
                 {"role": "system", "content": _OPERATOR_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            response_format={"type": "json_object"},
             max_tokens=256,
         )
         content = response.choices[0].message.content or ""
-        noticed = _OperatorOutput.model_validate_json(content).operators_noticed
+        noticed = _OperatorOutput.model_validate_json(extract_json(content)).operators_noticed
         for op in operators:
             noticed.setdefault(op, False)
     except Exception:
@@ -236,11 +235,10 @@ def judge_context_extraction(
                 {"role": "system", "content": _CONTEXT_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            response_format={"type": "json_object"},
             max_tokens=128,
         )
         content = response.choices[0].message.content or ""
-        extracted = _ContextOutput.model_validate_json(content).context_extracted
+        extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted
         extracted = (extracted + [False] * len(context_sentences))[: len(context_sentences)]
     except Exception:
         extracted = [False] * len(context_sentences)
