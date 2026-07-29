@@ -13,8 +13,17 @@ from amfv_eval._utils import extract_json
 __all__ = ["decompose"]
 
 _SYSTEM = """\
-You are a scientific claim decomposer. Given a passage, think carefully about its \
-structure and extract every atomic factual claim it makes.
+You are a scientific claim decomposer. Given a passage, extract every atomic factual \
+claim it makes — statements that are independently verifiable and make a concrete \
+assertion about the world.
+
+Do NOT extract:
+- Background or framing sentences (e.g. "X has been extensively studied.")
+- Methodological context (e.g. "This study used a murine model.")
+- Statements that describe what was done without asserting a verifiable fact
+
+Each atom must be a standalone, grammatically complete declarative sentence that \
+could in principle be verified true or false against evidence.
 
 Respond with valid JSON:
   {"atoms": ["<claim 1>", "<claim 2>", ...]}
@@ -32,6 +41,7 @@ def decompose(
     model: str,
     cache: GenerationCache,
     enable_thinking: bool = False,
+    debug: bool = False,
 ) -> tuple[list[str], str]:
     """Decompose a passage into atomic claims.
 
@@ -53,6 +63,7 @@ def decompose(
         return cached["atoms"], cached.get("thinking_trace", "")
 
     extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
+    max_tokens = 8192 if enable_thinking else 1024
     try:
         response = client.chat.completions.create(
             model=model,
@@ -60,11 +71,12 @@ def decompose(
                 {"role": "system", "content": _SYSTEM},
                 {"role": "user", "content": f"Passage: {passage}"},
             ],
-            max_tokens=1024,
+            max_tokens=max_tokens,
             extra_body=extra,
         )
         raw = response.choices[0].message.content or ""
-        print(f"[decompose] {raw}", flush=True)
+        if debug:
+            print(f"[decompose] completion returned:\n{raw}", flush=True)
         thinking = _extract_thinking(response, raw)
         atoms = _Output.model_validate_json(extract_json(raw)).atoms
     except Exception:
@@ -82,7 +94,7 @@ def _extract_thinking(response: openai.types.chat.ChatCompletion, raw: str) -> s
     - ``<think>...</think>`` tags embedded in the content
     """
     msg = response.choices[0].message
-    rc = getattr(msg, "reasoning_content", None)
+    rc = getattr(msg, "reasoning", None)
     if rc:
         return rc
     m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)

@@ -163,6 +163,7 @@ def generate_example(
     cache: GenerationCache,
     split: Literal["train", "validation", "test"],
     example_index: int,
+    debug: bool = False,
 ) -> EvalExample | None:
     """Generate a single eval example, using the disk cache if available.
 
@@ -195,9 +196,11 @@ def generate_example(
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                max_tokens=2048,
+                max_tokens=16384,
             )
             content = response.choices[0].message.content or ""
+            if debug:
+                print(f"[generate] completion returned:\n{content}", flush=True)
             output = _LLMOutput.model_validate_json(extract_json(content))
         except Exception:
             return None
@@ -233,6 +236,7 @@ def generate_split(
     cache: GenerationCache,
     seed: int = 42,
     target: int | None = None,
+    debug: bool = False,
 ) -> list[EvalExample]:
     """Generate eval examples for one split.
 
@@ -267,7 +271,8 @@ def generate_split(
     with tqdm(total=target, desc=f"[{split}] generating", unit="ex") as bar:
         while len(examples) < target and attempts < attempt_cap:
             attempts += 1
-
+            if debug:
+                print(f"[generate] attempt {attempts}/{attempt_cap}", flush=True)
             group = rng.choices(groups, weights=weights, k=1)[0]
 
             n_ops = rng.choices(
@@ -301,6 +306,7 @@ def generate_split(
                 cache=cache,
                 split=split,
                 example_index=example_index,
+                debug=debug,
             )
             if example is not None:
                 examples.append(example)

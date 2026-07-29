@@ -37,7 +37,13 @@ from tqdm import tqdm
 
 from amfv_eval._cache import GenerationCache
 from amfv_eval._decompose import decompose
-from amfv_eval._judge import judge_atoms, judge_context_extraction, judge_operators
+from amfv_eval._judge import (
+    judge_atoms,
+    judge_context_extraction,
+    judge_operator_awareness,
+    judge_operators,
+    judge_source_claims,
+)
 from amfv_eval.generate import generate_split
 from amfv_eval.metrics import compute_metrics, print_report
 from amfv_eval.scifact import group_claims, load_claims
@@ -62,75 +68,97 @@ def _normalise_base_url(url: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shared evaluation logic
+# Decomposition and judging (run separately so different models can be used)
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_examples(
+def _decompose_examples(
     examples: list[dict],
     *,
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
     enable_thinking: bool = False,
+    debug: bool = False,
 ) -> list[dict]:
-    """Decompose each passage and judge atoms + operator awareness.
+    """Run decomposition on each passage and store the result.
 
-    Appends a new entry to each record's ``"evaluations"`` list and sets the
-    top-level ``"passed"`` flag.
-
-    Args:
-        examples: Eval records (may already contain prior evaluations).
-        client: OpenAI-compatible client.
-        model: Model to use for decomposition and judging.
-        cache: Disk cache.
-        enable_thinking: Forward ``enable_thinking`` to the decompose call.
-
-    Returns:
-        Same records with a new evaluation appended.
+    Appends a new entry to each record's ``"decompositions"`` list.
     """
     results = []
-    for ex in tqdm(examples, desc="evaluating", unit="ex"):
+    for ex in tqdm(examples, desc="decomposing", unit="ex"):
         atoms, trace = decompose(
             ex["passage"], client=client, model=model, cache=cache,
-            enable_thinking=enable_thinking,
+            enable_thinking=enable_thinking, debug=debug,
         )
+        record = dict(ex)
+        record.setdefault("decompositions", [])
+        record["decompositions"].append({
+            "model": model,
+            "extracted_atoms": atoms,
+            "thinking_trace": trace,
+        })
+        results.append(record)
+    return results
+
+
+def _judge_examples(
+    examples: list[dict],
+    *,
+    client: openai.OpenAI,
+    model: str,
+    cache: GenerationCache,
+) -> list[dict]:
+    """Judge the latest decomposition in each record.
+
+    Reads ``record["decompositions"][-1]`` and runs atom coverage, context
+    extraction, and operator awareness judges.  Appends a new entry to each
+    record's ``"evaluations"`` list and sets the top-level ``"passed"`` flag.
+    """
+    results = []
+    for ex in tqdm(examples, desc="judging", unit="ex"):
+        decomps = ex.get("decompositions", [])
+        if not decomps:
+            print(
+                f"[WARNING] record {ex.get('id', '?')} has no decompositions; skipping.",
+                file=sys.stderr, flush=True,
+            )
+            continue
+        latest = decomps[-1]
+        atoms: list[str] = latest["extracted_atoms"]
+        trace: str = latest["thinking_trace"]
+
         atom_covered = judge_atoms(
             ex["gold_atoms"], atoms, client=client, model=model, cache=cache
-        )
-        operators_noticed = judge_operators(
-            ex["operators"], trace, client=client, model=model, cache=cache
         )
         context_extracted = judge_context_extraction(
             ex.get("context_sentences", []), atoms, client=client, model=model, cache=cache
         )
-
-        passed = (
-            all(atom_covered)
-            and all(operators_noticed.values())
-            and not any(context_extracted)
+        operators_noticed = judge_operator_awareness(
+            ex["operators"], trace, client=client, model=model, cache=cache
         )
+
+        passed = all(atom_covered) and not any(context_extracted)
 
         n_gold = len(atom_covered)
         recall = sum(atom_covered) / n_gold if n_gold else 1.0
-        op_recall = (
+        n_ctx = len(context_extracted)
+        ctx_precision = 1.0 - (sum(context_extracted) / n_ctx) if n_ctx else 1.0
+        op_awareness = (
             sum(operators_noticed.values()) / len(operators_noticed)
             if operators_noticed
             else 1.0
         )
-        n_ctx = len(context_extracted)
-        ctx_precision = 1.0 - (sum(context_extracted) / n_ctx) if n_ctx else 1.0
 
         evaluation = {
-            "model": model,
-            "extracted_atoms": atoms,
-            "thinking_trace": trace,
+            "decomposition_model": latest["model"],
+            "judge_model": model,
             "atom_covered": atom_covered,
-            "operators_noticed": operators_noticed,
             "context_extracted": context_extracted,
+            "operators_noticed": operators_noticed,
             "atom_recall": recall,
-            "operator_recall": op_recall,
             "context_precision": ctx_precision,
+            "operator_awareness_score": op_awareness,
             "passed": passed,
         }
 
@@ -141,6 +169,67 @@ def _evaluate_examples(
         results.append(record)
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Dataset validation (run once during generation)
+# ---------------------------------------------------------------------------
+
+
+def _validate_dataset_examples(
+    examples: list[dict],
+    *,
+    client: openai.OpenAI,
+    model: str,
+    cache: GenerationCache,
+) -> tuple[list[dict], list[dict]]:
+    """Verify each example meets dataset quality requirements.
+
+    Checks that source claims are faithfully represented in the passage and
+    gold atoms, and that the passage correctly applies its operators.
+
+    Returns:
+        ``(passed, failed)`` — both lists have a ``"dataset_validation"``
+        field attached for inspection.
+    """
+    passed: list[dict] = []
+    failed: list[dict] = []
+    for ex in tqdm(examples, desc="validating dataset", unit="ex"):
+        source_claims = [c["claim"] for c in ex.get("source_claims", [])]
+
+        source_coverage = judge_source_claims(
+            source_claims,
+            ex["passage"],
+            ex["gold_atoms"],
+            client=client,
+            model=model,
+            cache=cache,
+        )
+        operators_applied = judge_operators(
+            ex["operators"],
+            ex["passage"],
+            client=client,
+            model=model,
+            cache=cache,
+        )
+
+        valid = (
+            all(source_coverage["in_passage"])
+            and all(source_coverage["in_gold"])
+            and all(operators_applied.values())
+        )
+
+        record = dict(ex)
+        record["dataset_validation"] = {
+            "model": model,
+            "source_in_passage": source_coverage["in_passage"],
+            "source_in_gold": source_coverage["in_gold"],
+            "operators_applied": operators_applied,
+            "passed": valid,
+        }
+        (passed if valid else failed).append(record)
+
+    return passed, failed
 
 
 # ---------------------------------------------------------------------------
@@ -202,26 +291,16 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             cache=cache,
             seed=args.seed,
             target=target,
+            debug=args.debug,
         )
-        print(f"[{split}] {len(examples)} passages generated. Evaluating…", flush=True)
-
-        records = _evaluate_examples(
-            [ex.to_dict() for ex in examples],
-            client=client,
-            model=args.model,
-            cache=cache,
-            enable_thinking=args.enable_thinking,
+        raw_dicts = [ex.to_dict() for ex in examples]
+        print(f"[{split}] {len(raw_dicts)} passages generated. Validating…", flush=True)
+        split_pass, split_fail = _validate_dataset_examples(
+            raw_dicts, client=client, model=args.model, cache=cache
         )
-
-        split_pass = [r for r in records if r["passed"]]
-        split_fail = [r for r in records if not r["passed"]]
+        print(f"[{split}] {len(split_pass)}/{len(raw_dicts)} passed dataset validation.", flush=True)
         all_pass.extend(split_pass)
         all_fail.extend(split_fail)
-
-        print_report(
-            compute_metrics(records),
-            title=f"generate · {split} · {args.model}",
-        )
 
     _write_jsonl(all_pass, args.out)
     print(f"Passed : {len(all_pass):,} → {args.out}")
@@ -240,13 +319,64 @@ def _cmd_filter(args: argparse.Namespace) -> None:
     client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
     cache = GenerationCache(cache_dir=args.cache_dir)
 
-    print(f"Evaluating with {args.model}…", flush=True)
-    records = _evaluate_examples(examples, client=client, model=args.model, cache=cache, enable_thinking=args.enable_thinking)
+    print(f"Validating dataset with {args.model}…", flush=True)
+    passed, failed = _validate_dataset_examples(
+        examples, client=client, model=args.model, cache=cache
+    )
+    print(f"{len(passed)}/{len(examples)} passed dataset validation.", flush=True)
+
+    _write_jsonl(passed, args.out)
+    print(f"Passed : {len(passed):,} → {args.out}")
+    if args.failures:
+        _write_jsonl(failed, args.failures)
+        print(f"Failed : {len(failed):,} → {args.failures}")
+
+
+def _cmd_decompose(args: argparse.Namespace) -> None:
+    _ensure_parent(args.out)
+
+    examples = _load_jsonl(args.input)
+    print(f"Loaded {len(examples):,} examples from {args.input}", flush=True)
+
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    cache = GenerationCache(cache_dir=args.cache_dir)
+
+    print(f"Decomposing with {args.model}…", flush=True)
+    records = _decompose_examples(
+        examples,
+        client=client,
+        model=args.model,
+        cache=cache,
+        enable_thinking=args.enable_thinking,
+        debug=args.debug,
+    )
+
+    _write_jsonl(records, args.out)
+    print(f"Decomposed : {len(records):,} → {args.out}")
+
+
+def _cmd_eval(args: argparse.Namespace) -> None:
+    _ensure_parent(args.out)
+    _ensure_parent(args.failures)
+
+    examples = _load_jsonl(args.input)
+    print(f"Loaded {len(examples):,} examples from {args.input}", flush=True)
+
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    cache = GenerationCache(cache_dir=args.cache_dir)
+
+    print(f"Judging with {args.model}…", flush=True)
+    records = _judge_examples(
+        examples,
+        client=client,
+        model=args.model,
+        cache=cache,
+    )
 
     passed = [r for r in records if r["passed"]]
     failed = [r for r in records if not r["passed"]]
 
-    print_report(compute_metrics(records), title=f"filter · {args.model}")
+    print_report(compute_metrics(records), title=f"eval · {args.model}")
 
     _write_jsonl(passed, args.out)
     print(f"Passed : {len(passed):,} → {args.out}")
@@ -279,28 +409,31 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
         default=None,
         help="Output JSONL for failing examples (optional).",
     )
-    p.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
     p.add_argument(
-        "--enable-thinking",
+        "--debug",
         action="store_true",
         default=False,
-        help=(
-            "Pass enable_thinking=True to the vLLM server during decomposition. "
-            "Required for models that disable extended thinking by default."
-        ),
+        help="Print each chat completion response as it is returned.",
     )
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Generate and iteratively filter decomposer eval examples."""
+    """Generate, filter, and evaluate decomposer eval examples."""
     parser = argparse.ArgumentParser(
         prog="amfv-eval",
-        description="Decomposer eval-set generation and multi-model filtering.",
+        description="Decomposer eval-set generation, dataset filtering, and model evaluation.",
     )
     subs = parser.add_subparsers(dest="command", required=True)
 
-    gen = subs.add_parser("generate", help="Generate passages and self-evaluate.")
+    # ------------------------------------------------------------------
+    # generate: produce passages and validate dataset quality
+    # ------------------------------------------------------------------
+    gen = subs.add_parser(
+        "generate",
+        help="Generate passages from SciFact and validate dataset quality.",
+    )
     _add_common_args(gen)
+    gen.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
     gen.add_argument(
         "--splits",
         nargs="+",
@@ -328,18 +461,67 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
 
-    filt = subs.add_parser("filter", help="Filter examples using a second judge model.")
+    # ------------------------------------------------------------------
+    # filter: re-validate an existing dataset with a different model
+    # ------------------------------------------------------------------
+    filt = subs.add_parser(
+        "filter",
+        help="Re-validate an existing dataset with a different judge model.",
+    )
     _add_common_args(filt)
     filt.add_argument(
-        "--input",
-        "-i",
+        "--input", "-i",
         type=Path,
         required=True,
-        help="Input JSONL (output from a previous generate or filter step).",
+        help="Input JSONL (output from generate or a previous filter step).",
+    )
+
+    # ------------------------------------------------------------------
+    # decompose: run decomposition on a dataset with the model under test
+    # ------------------------------------------------------------------
+    dec = subs.add_parser(
+        "decompose",
+        help="Decompose passages in a dataset using the model under test.",
+    )
+    _add_common_args(dec)
+    dec.add_argument(
+        "--input", "-i",
+        type=Path,
+        required=True,
+        help="Input JSONL (output from generate or filter).",
+    )
+    dec.add_argument(
+        "--enable-thinking",
+        action="store_true",
+        default=False,
+        help=(
+            "Pass enable_thinking=True to the vLLM server. "
+            "Required for models that disable extended thinking by default."
+        ),
+    )
+
+    # ------------------------------------------------------------------
+    # eval: judge decomposition results with a (potentially different) model
+    # ------------------------------------------------------------------
+    ev = subs.add_parser(
+        "eval",
+        help="Judge decomposition results produced by the decompose command.",
+    )
+    _add_common_args(ev)
+    ev.add_argument(
+        "--input", "-i",
+        type=Path,
+        required=True,
+        help="Input JSONL (output from decompose).",
     )
 
     args = parser.parse_args(argv)
-    {"generate": _cmd_generate, "filter": _cmd_filter}[args.command](args)
+    {
+        "generate": _cmd_generate,
+        "filter": _cmd_filter,
+        "decompose": _cmd_decompose,
+        "eval": _cmd_eval,
+    }[args.command](args)
 
 
 if __name__ == "__main__":

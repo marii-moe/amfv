@@ -21,6 +21,8 @@ def compute_metrics(records: list[dict]) -> dict:
         Nested dict with keys ``total``, ``passed``, ``pass_rate``,
         ``atom_recall``, ``by_operator``, and ``by_n_operators``.
     """
+    print(f"Computing metrics for {len(records)} records…", flush=True)
+    print("Records: ", records if records else "<none>", flush=True)
     if not records:
         return {}
 
@@ -35,6 +37,7 @@ def compute_metrics(records: list[dict]) -> dict:
     for r in records:
         evals = r.get("evaluations", [])
         if not evals:
+            print(f"Warning: record {r.get('id', '<unknown>')} has no evaluations; skipping.")
             continue
         ev = evals[-1]
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 
 import openai
 from pydantic import BaseModel
@@ -11,7 +12,13 @@ from amfv_eval._cache import GenerationCache
 from amfv_eval.operators import get_operator
 from amfv_eval._utils import extract_json
 
-__all__ = ["judge_atoms", "judge_operators", "judge_context_extraction"]
+__all__ = [
+    "judge_atoms",
+    "judge_operators",
+    "judge_source_claims",
+    "judge_operator_awareness",
+    "judge_context_extraction",
+]
 
 _ATOM_SYSTEM = """\
 You are evaluating whether a set of extracted atomic claims covers a set of gold \
@@ -26,11 +33,50 @@ One boolean per gold atom, in the same order.
 """
 
 _OPERATOR_SYSTEM = """\
-You are evaluating whether a reasoning trace demonstrates awareness of specific \
+You are evaluating whether a scientific passage correctly applies specified linguistic \
+operators. The relevant linguistic structure must be clearly present in the passage.
+
+For each operator listed, output true if the passage uses it correctly, false otherwise.
+
+Operator reference with examples:
+
+Non-Relation Adding (no new relational fact introduced):
+  coreference_fusion    — "Aspirin reduces inflammation, and it also thins the blood."
+  apposition            — "BRCA1, a tumor suppressor gene, is located on chromosome 17."
+  relative_clause       — "The drug, which targets EGFR, was approved in 2015."
+  conjunction_reduction — "The treatment lowered blood pressure and cholesterol."
+  ellipsis              — "Group A received the vaccine, and Group B the placebo."
+
+Relation Adding (each introduces one new relational fact):
+  causal      — "The tumor shrank because the drug inhibited EGFR."
+  contrastive — "Group A improved, whereas Group B declined."
+  temporal    — "The patient received the vaccine and developed immunity later."
+
+Respond with valid JSON:
+  {"operators_applied": {"<operator_name>": <bool>, ...}}
+"""
+
+
+_SOURCE_CLAIM_SYSTEM = """\
+You are verifying the quality of a synthetic scientific training example.
+
+Given a list of seed claims, a generated passage, and a list of gold atoms:
+1. For each seed claim, output true in "in_passage" if the claim's fact is semantically \
+represented in the passage (possibly paraphrased).
+2. For each seed claim, output true in "in_gold" if it is semantically covered by at \
+least one gold atom.
+
+Respond with valid JSON:
+  {"in_passage": [<bool>, ...], "in_gold": [<bool>, ...]}
+One boolean per seed claim, in the same order as the input list.
+"""
+
+_OPERATOR_AWARENESS_SYSTEM = """\
+You are evaluating whether a model's reasoning trace demonstrates awareness of specific \
 linguistic relationships present in a scientific passage.
 
-For each operator listed below, output true if the reasoning trace shows the model \
-noticed that kind of relationship — it does not need to name the operator explicitly.
+For each operator listed, output true if the reasoning trace shows the model noticed \
+that kind of relationship — it does not need to name the operator explicitly.
 
 Operator reference with examples:
 
@@ -49,7 +95,6 @@ Relation Adding (each introduces one new relational fact):
 Respond with valid JSON:
   {"operators_noticed": {"<operator_name>": <bool>, ...}}
 """
-
 
 _CONTEXT_SYSTEM = """\
 You are checking whether a model incorrectly extracted non-verifiable context \
@@ -79,6 +124,15 @@ class _AtomOutput(BaseModel):
 
 
 class _OperatorOutput(BaseModel):
+    operators_applied: dict[str, bool]
+
+
+class _SourceClaimOutput(BaseModel):
+    in_passage: list[bool]
+    in_gold: list[bool]
+
+
+class _OperatorAwarenessOutput(BaseModel):
     operators_noticed: dict[str, bool]
 
 
@@ -126,8 +180,10 @@ def judge_atoms(
                 {"role": "system", "content": _ATOM_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=256,
+            max_tokens=2048,
         )
+        if response.choices[0].finish_reason == "length" and not response.choices[0].message.content:
+            print("[WARNING] judge_atoms: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
         covered = _AtomOutput.model_validate_json(extract_json(content)).atom_covered
         # Align to gold length in case the model under/over-counts
@@ -141,25 +197,131 @@ def judge_atoms(
 
 def judge_operators(
     operators: list[str],
+    passage: str,
+    *,
+    client: openai.OpenAI,
+    model: str,
+    cache: GenerationCache,
+) -> dict[str, bool]:
+    """Judge whether a passage correctly applies each specified operator.
+
+    Args:
+        operators: Operator names that were supposed to be applied.
+        passage: The generated passage to evaluate.
+        client: OpenAI-compatible client.
+        model: Judge model name.
+        cache: Disk cache.
+
+    Returns:
+        Mapping from operator name to applied boolean.
+    """
+    cache_key = cache.key("judge_operators", model, json.dumps(operators), passage)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached["operators_applied"]
+
+    op_desc = "\n".join(
+        f"- {name}: {get_operator(name).description}" for name in operators
+    )
+    user_msg = f"Operators:\n{op_desc}\n\nPassage:\n{passage}"
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _OPERATOR_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=2048,
+        )
+        if response.choices[0].finish_reason == "length":
+            print("[WARNING] judge_operators: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
+        content = response.choices[0].message.content or ""
+        applied = _OperatorOutput.model_validate_json(extract_json(content)).operators_applied
+        for op in operators:
+            applied.setdefault(op, False)
+    except Exception:
+        applied = {op: False for op in operators}
+
+    cache.set(cache_key, {"operators_applied": applied})
+    return applied
+
+
+def judge_source_claims(
+    source_claims: list[str],
+    passage: str,
+    gold_atoms: list[str],
+    *,
+    client: openai.OpenAI,
+    model: str,
+    cache: GenerationCache,
+) -> dict[str, list[bool]]:
+    """Check that each source claim is represented in the passage and in the gold atoms.
+
+    Used during dataset creation to verify example quality.
+
+    Returns:
+        Dict with ``"in_passage"`` and ``"in_gold"`` lists, one bool per source claim.
+    """
+    cache_key = cache.key(
+        "judge_source_claims", model,
+        json.dumps(source_claims),
+        passage,
+        json.dumps(gold_atoms),
+    )
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return {"in_passage": cached["in_passage"], "in_gold": cached["in_gold"]}
+
+    n = len(source_claims)
+    claims_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(source_claims))
+    gold_text = "\n".join(f"- {a}" for a in gold_atoms) if gold_atoms else "(none)"
+    user_msg = (
+        f"Seed claims:\n{claims_text}\n\n"
+        f"Passage:\n{passage}\n\n"
+        f"Gold atoms:\n{gold_text}"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SOURCE_CLAIM_SYSTEM},
+                {"role": "user", "content": user_msg},
+            ],
+            max_tokens=2048,
+        )
+        if response.choices[0].finish_reason == "length":
+            print("[WARNING] judge_source_claims: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
+        content = response.choices[0].message.content or ""
+        out = _SourceClaimOutput.model_validate_json(extract_json(content))
+        in_passage = (out.in_passage + [False] * n)[:n]
+        in_gold = (out.in_gold + [False] * n)[:n]
+    except Exception:
+        in_passage = [False] * n
+        in_gold = [False] * n
+
+    result = {"in_passage": in_passage, "in_gold": in_gold}
+    cache.set(cache_key, result)
+    return result
+
+
+def judge_operator_awareness(
+    operators: list[str],
     thinking_trace: str,
     *,
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
 ) -> dict[str, bool]:
-    """Judge whether a thinking trace shows awareness of each operator relationship.
+    """Score whether a thinking trace mentions each operator relationship.
 
-    Args:
-        operators: Operator names used in the eval example.
-        thinking_trace: The decomposer model's extended reasoning text.
-        client: OpenAI-compatible client.
-        model: Judge model name.
-        cache: Disk cache.
+    Used during downstream model evaluation — not a hard pass/fail criterion.
 
     Returns:
         Mapping from operator name to noticed boolean.
     """
-    cache_key = cache.key("judge_operators", model, json.dumps(operators), thinking_trace)
+    cache_key = cache.key("judge_operator_awareness", model, json.dumps(operators), thinking_trace)
     cached = cache.get(cache_key)
     if cached is not None:
         return cached["operators_noticed"]
@@ -176,13 +338,15 @@ def judge_operators(
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": _OPERATOR_SYSTEM},
+                {"role": "system", "content": _OPERATOR_AWARENESS_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=256,
+            max_tokens=2048,
         )
+        if response.choices[0].finish_reason == "length":
+            print("[WARNING] judge_operator_awareness: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
-        noticed = _OperatorOutput.model_validate_json(extract_json(content)).operators_noticed
+        noticed = _OperatorAwarenessOutput.model_validate_json(extract_json(content)).operators_noticed
         for op in operators:
             noticed.setdefault(op, False)
     except Exception:
@@ -235,7 +399,7 @@ def judge_context_extraction(
                 {"role": "system", "content": _CONTEXT_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=128,
+            max_tokens=2048,
         )
         content = response.choices[0].message.content or ""
         extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted
