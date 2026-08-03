@@ -114,7 +114,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     gpu_common: dict = {
         "config": str(config_path.resolve()),
         "gpus": tensor_parallel,
-        "cpus_per_gpu": cfg.get("cpus_per_gpu", 4),
+        "cpus_per_gpu": cfg.get("cpus_per_gpu", 16),
         "partition": cfg.get("partition", None),
         "slurm_resume": cfg.get("slurm_resume", False),
         "nice": cfg.get("nice", None),
