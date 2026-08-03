@@ -1,0 +1,56 @@
+# amfv-eval pipeline configuration
+# Run with: DIR=/mount/marii python slurm/pipeline.py --config example_config.yaml
+#
+# All relative paths are resolved against the DIR environment variable.
+# Set DIR to your per-user data directory on the cluster, e.g. DIR=/mount/marii
+
+# Shared settings
+base_url: http://localhost:8000/v1
+cache_dir: cache/amfv_eval
+partition: gpu
+tensor_parallel: 4
+n_shards: 8
+qos: normal  # default; override per-step below
+
+generate:
+  model: Qwen/QwQ-32B
+  qos: normal
+  splits: [train, validation]
+  n_examples: 1000
+  seed: 42
+  out: generated.jsonl
+  failures: generated_fail.jsonl
+
+filter:
+  - model: Qwen/QwQ-32B-Preview
+    qos: normal
+    input: generated.jsonl
+    out: filtered_1.jsonl
+    failures: filtered_1_fail.jsonl
+  - model: meta-llama/Llama-3.1-70B-Instruct
+    qos: normal
+    input: filtered_1.jsonl
+    out: filtered_2.jsonl
+    failures: filtered_2_fail.jsonl
+
+decompose:
+  - model: Qwen/QwQ-32B
+    qos: low
+    enable_thinking: true
+    out: decomposed_qwq.jsonl
+  - model: meta-llama/Llama-3.1-70B-Instruct
+    qos: low
+    enable_thinking: false
+    out: decomposed_llama.jsonl
+
+eval:
+  - model: Qwen/QwQ-72B
+    qos: bottom
+    input: decomposed_qwq.jsonl
+    out: results_qwq.jsonl
+    failures: results_qwq_fail.jsonl
+  - model: Qwen/QwQ-72B
+    qos: bottom
+    input: decomposed_llama.jsonl
+    out: results_llama.jsonl
+    failures: results_llama_fail.jsonl

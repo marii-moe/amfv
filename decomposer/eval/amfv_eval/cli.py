@@ -1,38 +1,32 @@
-"""CLI entry point for decomposer eval-set generation and filtering.
+"""CLI entry point for decomposer eval-set generation, filtering, and evaluation.
 
 Commands
 --------
-``amfv-eval generate``
-    Generate passages from SciFact, then self-evaluate using the same model.
-    Outputs passing examples; optionally writes failures separately.
+``amfv-eval generate``   Generate passages from SciFact and validate dataset quality.
+``amfv-eval filter``     Re-validate with a different judge model.
+``amfv-eval decompose``  Run decomposition on a dataset with the model under test.
+``amfv-eval eval``       Judge decomposition results with a (potentially different) model.
+``amfv-eval shard``      Split a JSONL into N shards for parallel processing.
+``amfv-eval merge``      Merge shard outputs back into a single JSONL.
 
-``amfv-eval filter``
-    Load examples from a previous step, run a new judge model on them,
-    and output only those that pass.
-
-Typical workflow (swap vLLM model between steps)::
-
-    # Model #1 in vLLM
-    amfv-eval generate --model <m1> --out pass1.jsonl --failures fail1.jsonl
-
-    # Swap to model #2
-    amfv-eval filter --model <m2> --in pass1.jsonl --out pass2.jsonl --failures fail2.jsonl
-
-    # Swap to model #3
-    amfv-eval filter --model <m3> --in pass2.jsonl --out pass3.jsonl --failures fail3.jsonl
-
-    # Repeat until enough examples accumulate in the final output.
+All commands accept ``--config config.yaml`` to load defaults from a YAML file.
+List-type commands (filter, decompose, eval) also accept ``--step N`` to select
+which entry in the YAML list to use.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
+import signal
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Generator, Literal
 
 import openai
+import yaml
 from tqdm import tqdm
 
 from amfv_eval._cache import GenerationCache
@@ -50,25 +44,123 @@ from amfv_eval.scifact import group_claims, load_claims
 
 _DEFAULT_BASE_URL = "http://localhost:8000/v1"
 
+# Base directory for resolving relative paths from YAML config.
+# Set via the DIR environment variable, e.g. DIR=/mount/marii python slurm/pipeline.py …
+_BASE_DIR = Path(os.environ.get("DIR", ".")).resolve()
+
+
+def _resolve_path(val: str | Path | None) -> Path | None:
+    """Resolve a path against DIR if it is relative; absolute paths are unchanged."""
+    if val is None:
+        return None
+    p = Path(val)
+    return p if p.is_absolute() else _BASE_DIR / p
+
+# ---------------------------------------------------------------------------
+# Graceful shutdown on SIGTERM
+# ---------------------------------------------------------------------------
+
+_shutdown = False
+
+
+def _handle_sigterm(signum: int, frame: object) -> None:
+    global _shutdown
+    _shutdown = True
+    print(
+        "[amfv-eval] SIGTERM received; finishing current item then exiting…",
+        file=sys.stderr, flush=True,
+    )
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+# ---------------------------------------------------------------------------
+# YAML config loading
+# ---------------------------------------------------------------------------
+
+
+def _load_yaml_defaults(config_path: Path, command: str, step: int | None) -> dict:
+    """Load CLI defaults from a YAML config for the given command and step."""
+    with config_path.open() as f:
+        cfg = yaml.safe_load(f)
+
+    # Shared top-level settings
+    defaults: dict = {}
+    for key in ("base_url", "cache_dir", "debug"):
+        if key in cfg:
+            val = cfg[key]
+            if key == "cache_dir" and val is not None:
+                val = _resolve_path(val)
+            defaults[key] = val
+
+    # Command-specific settings
+    cmd_cfg = cfg.get(command)
+    if cmd_cfg is None:
+        return defaults
+
+    if isinstance(cmd_cfg, list):
+        if step is None or step >= len(cmd_cfg):
+            return defaults
+        cmd_cfg = cmd_cfg[step]
+
+    path_keys = {"out", "failures", "input", "cache_dir", "out_dir", "in_dir", "data_dir"}
+    for key, val in cmd_cfg.items():
+        if key in path_keys and val is not None:
+            val = _resolve_path(val)
+        defaults[key] = val
+
+    return defaults
+
+
+# ---------------------------------------------------------------------------
+# I/O helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(records: list[dict], path: Path) -> None:
+    with path.open("w") as f:
+        for r in records:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+def _load_jsonl(path: Path) -> list[dict]:
+    with path.open() as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def _ensure_parent(path: Path | None) -> None:
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _load_completed_ids(path: Path | None) -> set[str]:
+    """Return the set of record IDs already written to an output file."""
+    if path is None or not path.exists():
+        return set()
+    with path.open() as f:
+        ids = set()
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    ids.add(json.loads(line)["id"])
+                except (json.JSONDecodeError, KeyError):
+                    pass
+        return ids
+
 
 def _normalise_base_url(url: str) -> str:
-    """Ensure the base URL has a scheme and ends at /v1, not a full path.
-
-    Handles common mistakes like omitting ``http://`` or appending
-    ``/chat/completions``.
-    """
     if "://" not in url:
         url = "http://" + url
-    # Strip any path suffix beyond /v1
     for suffix in ("/v1/chat/completions", "/v1/completions", "/v1/embeddings"):
         if url.endswith(suffix):
-            url = url[: -len(suffix) + 3]  # keep up to "/v1"
+            url = url[: -len(suffix) + 3]
             break
     return url
 
 
 # ---------------------------------------------------------------------------
-# Decomposition and judging (run separately so different models can be used)
+# Decomposition and judging
 # ---------------------------------------------------------------------------
 
 
@@ -80,12 +172,8 @@ def _decompose_examples(
     cache: GenerationCache,
     enable_thinking: bool = False,
     debug: bool = False,
-) -> list[dict]:
-    """Run decomposition on each passage and store the result.
-
-    Appends a new entry to each record's ``"decompositions"`` list.
-    """
-    results = []
+) -> Generator[dict, None, None]:
+    """Decompose each passage. Yields records; checks _shutdown between items."""
     for ex in tqdm(examples, desc="decomposing", unit="ex"):
         atoms, trace = decompose(
             ex["passage"], client=client, model=model, cache=cache,
@@ -98,8 +186,9 @@ def _decompose_examples(
             "extracted_atoms": atoms,
             "thinking_trace": trace,
         })
-        results.append(record)
-    return results
+        yield record
+        if _shutdown:
+            break
 
 
 def _judge_examples(
@@ -108,14 +197,8 @@ def _judge_examples(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> list[dict]:
-    """Judge the latest decomposition in each record.
-
-    Reads ``record["decompositions"][-1]`` and runs atom coverage, context
-    extraction, and operator awareness judges.  Appends a new entry to each
-    record's ``"evaluations"`` list and sets the top-level ``"passed"`` flag.
-    """
-    results = []
+) -> Generator[dict, None, None]:
+    """Judge the latest decomposition in each record. Yields records."""
     for ex in tqdm(examples, desc="judging", unit="ex"):
         decomps = ex.get("decompositions", [])
         if not decomps:
@@ -146,8 +229,7 @@ def _judge_examples(
         ctx_precision = 1.0 - (sum(context_extracted) / n_ctx) if n_ctx else 1.0
         op_awareness = (
             sum(operators_noticed.values()) / len(operators_noticed)
-            if operators_noticed
-            else 1.0
+            if operators_noticed else 1.0
         )
 
         eval_score = 0.6 * recall + 0.4 * ctx_precision
@@ -171,13 +253,13 @@ def _judge_examples(
         record.setdefault("evaluations", [])
         record["evaluations"].append(evaluation)
         record["passed"] = passed
-        results.append(record)
-
-    return results
+        yield record
+        if _shutdown:
+            break
 
 
 # ---------------------------------------------------------------------------
-# Dataset validation (run once during generation)
+# Dataset validation
 # ---------------------------------------------------------------------------
 
 
@@ -190,12 +272,8 @@ def _validate_dataset_examples(
 ) -> tuple[list[dict], list[dict]]:
     """Verify each example meets dataset quality requirements.
 
-    Checks that source claims are faithfully represented in the passage and
-    gold atoms, and that the passage correctly applies its operators.
-
     Returns:
-        ``(passed, failed)`` — both lists have a ``"dataset_validation"``
-        field attached for inspection.
+        ``(passed, failed)`` — both lists have a ``"dataset_validation"`` field.
     """
     passed: list[dict] = []
     failed: list[dict] = []
@@ -203,19 +281,12 @@ def _validate_dataset_examples(
         source_claims = [c["claim"] for c in ex.get("source_claims", [])]
 
         source_coverage = judge_source_claims(
-            source_claims,
-            ex["passage"],
-            ex["gold_atoms"],
-            client=client,
-            model=model,
-            cache=cache,
+            source_claims, ex["passage"], ex["gold_atoms"],
+            client=client, model=model, cache=cache,
         )
         operators_applied = judge_operators(
-            ex["operators"],
-            ex["passage"],
-            client=client,
-            model=model,
-            cache=cache,
+            ex["operators"], ex["passage"],
+            client=client, model=model, cache=cache,
         )
 
         valid = (
@@ -233,29 +304,10 @@ def _validate_dataset_examples(
             "passed": valid,
         }
         (passed if valid else failed).append(record)
+        if _shutdown:
+            break
 
     return passed, failed
-
-
-# ---------------------------------------------------------------------------
-# I/O helpers
-# ---------------------------------------------------------------------------
-
-
-def _write_jsonl(records: list[dict], path: Path) -> None:
-    with path.open("w") as f:
-        for r in records:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-
-
-def _load_jsonl(path: Path) -> list[dict]:
-    with path.open() as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def _ensure_parent(path: Path | None) -> None:
-    if path is not None:
-        path.parent.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -288,15 +340,9 @@ def _cmd_generate(args: argparse.Namespace) -> None:
 
         print(f"[{split}] Generating passages…", flush=True)
         examples = generate_split(
-            groups,
-            n_claims=n_claims,
-            split=split_key,
-            client=client,
-            model=args.model,
-            cache=cache,
-            seed=args.seed,
-            target=target,
-            debug=args.debug,
+            groups, n_claims=n_claims, split=split_key,
+            client=client, model=args.model, cache=cache,
+            seed=args.seed, target=target, debug=args.debug,
         )
         raw_dicts = [ex.to_dict() for ex in examples]
         print(f"[{split}] {len(raw_dicts)} passages generated. Validating…", flush=True)
@@ -343,21 +389,25 @@ def _cmd_decompose(args: argparse.Namespace) -> None:
     examples = _load_jsonl(args.input)
     print(f"Loaded {len(examples):,} examples from {args.input}", flush=True)
 
+    completed = _load_completed_ids(args.out)
+    if completed:
+        print(f"Resuming: {len(completed):,} already done, {len(examples) - len(completed):,} remaining.", flush=True)
+    to_process = [ex for ex in examples if ex.get("id") not in completed]
+
     client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Decomposing with {args.model}…", flush=True)
-    records = _decompose_examples(
-        examples,
-        client=client,
-        model=args.model,
-        cache=cache,
-        enable_thinking=args.enable_thinking,
-        debug=args.debug,
-    )
+    with args.out.open("a") as f:
+        for record in _decompose_examples(
+            to_process, client=client, model=args.model, cache=cache,
+            enable_thinking=args.enable_thinking, debug=args.debug,
+        ):
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
 
-    _write_jsonl(records, args.out)
-    print(f"Decomposed : {len(records):,} → {args.out}")
+    total = len(completed) + len(to_process)
+    print(f"Decomposed : {total:,} → {args.out}")
 
 
 def _cmd_eval(args: argparse.Namespace) -> None:
@@ -367,27 +417,56 @@ def _cmd_eval(args: argparse.Namespace) -> None:
     examples = _load_jsonl(args.input)
     print(f"Loaded {len(examples):,} examples from {args.input}", flush=True)
 
+    completed = _load_completed_ids(args.out)
+    if completed:
+        print(f"Resuming: {len(completed):,} already done, {len(examples) - len(completed):,} remaining.", flush=True)
+    to_process = [ex for ex in examples if ex.get("id") not in completed]
+
     client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Judging with {args.model}…", flush=True)
-    records = _judge_examples(
-        examples,
-        client=client,
-        model=args.model,
-        cache=cache,
-    )
+    with args.out.open("a") as f:
+        for record in _judge_examples(
+            to_process, client=client, model=args.model, cache=cache,
+        ):
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
 
-    passed = [r for r in records if r["passed"]]
-    failed = [r for r in records if not r["passed"]]
+    if not _shutdown:
+        all_records = _load_jsonl(args.out)
+        passed = [r for r in all_records if r.get("passed")]
+        failed = [r for r in all_records if not r.get("passed")]
+        print_report(compute_metrics(all_records), title=f"eval · {args.model}")
+        if args.failures:
+            _write_jsonl(failed, args.failures)
+        print(f"Passed : {len(passed):,}  Failed : {len(failed):,} → {args.out}")
 
-    print_report(compute_metrics(records), title=f"eval · {args.model}")
 
-    _write_jsonl(passed, args.out)
-    print(f"Passed : {len(passed):,} → {args.out}")
-    if args.failures:
-        _write_jsonl(failed, args.failures)
-        print(f"Failed : {len(failed):,} → {args.failures}")
+def _cmd_shard(args: argparse.Namespace) -> None:
+    examples = _load_jsonl(args.input)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    shard_size = math.ceil(len(examples) / args.n)
+    written = 0
+    for i in range(args.n):
+        shard = examples[i * shard_size : (i + 1) * shard_size]
+        if shard:
+            _write_jsonl(shard, args.out_dir / f"shard_{i:03d}.jsonl")
+            written += 1
+    print(f"Split {len(examples):,} examples into {written} shards in {args.out_dir}")
+
+
+def _cmd_merge(args: argparse.Namespace) -> None:
+    shard_files = sorted(args.in_dir.glob("shard_*.jsonl"))
+    if not shard_files:
+        print(f"No shard files found in {args.in_dir}", file=sys.stderr)
+        sys.exit(1)
+    all_records: list[dict] = []
+    for path in shard_files:
+        all_records.extend(_load_jsonl(path))
+    _ensure_parent(args.out)
+    _write_jsonl(all_records, args.out)
+    print(f"Merged {len(shard_files)} shards → {len(all_records):,} records → {args.out}")
 
 
 # ---------------------------------------------------------------------------
@@ -396,11 +475,8 @@ def _cmd_eval(args: argparse.Namespace) -> None:
 
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument(
-        "--model",
-        required=True,
-        help="Model name as registered in the vLLM server.",
-    )
+    p.add_argument("--config", type=Path, default=None, help="YAML config file.")
+    p.add_argument("--model", required=True, help="Model name as registered in the vLLM server.")
     p.add_argument(
         "--base-url",
         default=_DEFAULT_BASE_URL,
@@ -408,117 +484,86 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--cache-dir", type=Path, default=None, help="LLM output cache directory.")
     p.add_argument("--out", type=Path, required=True, help="Output JSONL for passing examples.")
+    p.add_argument("--failures", type=Path, default=None, help="Output JSONL for failing examples (optional).")
+    p.add_argument("--debug", action="store_true", default=False, help="Print each chat completion response.")
+
+
+def _add_input_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--input", "-i", type=Path, required=True, help="Input JSONL.")
+
+
+def _add_step_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "--failures",
-        type=Path,
-        default=None,
-        help="Output JSONL for failing examples (optional).",
-    )
-    p.add_argument(
-        "--debug",
-        action="store_true",
-        default=False,
-        help="Print each chat completion response as it is returned.",
+        "--step", type=int, default=None,
+        help="Index into a YAML list section (filter/decompose/eval) to select.",
     )
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Generate, filter, and evaluate decomposer eval examples."""
+    """Generate, filter, decompose, and evaluate decomposer eval examples."""
+
+    # Pre-parse to extract --config and --step for YAML default loading.
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--config", type=Path, default=None)
+    pre.add_argument("--step", type=int, default=None)
+    pre.add_argument("command", nargs="?")
+    pre_args, _ = pre.parse_known_args(argv)
+
     parser = argparse.ArgumentParser(
         prog="amfv-eval",
-        description="Decomposer eval-set generation, dataset filtering, and model evaluation.",
+        description="Decomposer eval-set generation, filtering, and model evaluation.",
     )
     subs = parser.add_subparsers(dest="command", required=True)
 
-    # ------------------------------------------------------------------
-    # generate: produce passages and validate dataset quality
-    # ------------------------------------------------------------------
-    gen = subs.add_parser(
-        "generate",
-        help="Generate passages from SciFact and validate dataset quality.",
-    )
+    # generate
+    gen = subs.add_parser("generate", help="Generate passages from SciFact and validate dataset quality.")
     _add_common_args(gen)
     gen.add_argument("--seed", type=int, default=42, help="Random seed (default: 42).")
-    gen.add_argument(
-        "--splits",
-        nargs="+",
-        choices=["train", "validation", "test"],
-        default=["train", "validation", "test"],
-    )
-    gen.add_argument(
-        "--data-dir",
-        type=Path,
-        default=None,
-        help=(
-            "Directory containing SciFact JSONL files (claims_train.jsonl, "
-            "claims_dev.jsonl, claims_test_abstract.jsonl). "
-            "Omit to download from GitHub (cached in ~/.cache/amfv_eval/scifact/)."
-        ),
-    )
-    gen.add_argument(
-        "--n-examples",
-        type=int,
-        default=None,
-        help=(
-            "Total number of examples to generate per split.  "
-            "Defaults to n_claims \u00d7 4.  Use a small value (e.g. 50) to do a "
-            "quick quality check before a full run."
-        ),
-    )
+    gen.add_argument("--splits", nargs="+", choices=["train", "validation", "test"], default=["train", "validation", "test"])
+    gen.add_argument("--data-dir", type=Path, default=None, help="Directory containing SciFact JSONL files.")
+    gen.add_argument("--n-examples", type=int, default=None, help="Examples to generate per split (default: n_claims × 4).")
 
-    # ------------------------------------------------------------------
-    # filter: re-validate an existing dataset with a different model
-    # ------------------------------------------------------------------
-    filt = subs.add_parser(
-        "filter",
-        help="Re-validate an existing dataset with a different judge model.",
-    )
+    # filter
+    filt = subs.add_parser("filter", help="Re-validate an existing dataset with a different judge model.")
     _add_common_args(filt)
-    filt.add_argument(
-        "--input", "-i",
-        type=Path,
-        required=True,
-        help="Input JSONL (output from generate or a previous filter step).",
-    )
+    _add_input_arg(filt)
+    _add_step_arg(filt)
 
-    # ------------------------------------------------------------------
-    # decompose: run decomposition on a dataset with the model under test
-    # ------------------------------------------------------------------
-    dec = subs.add_parser(
-        "decompose",
-        help="Decompose passages in a dataset using the model under test.",
-    )
+    # decompose
+    dec = subs.add_parser("decompose", help="Decompose passages using the model under test.")
     _add_common_args(dec)
-    dec.add_argument(
-        "--input", "-i",
-        type=Path,
-        required=True,
-        help="Input JSONL (output from generate or filter).",
-    )
-    dec.add_argument(
-        "--enable-thinking",
-        action="store_true",
-        default=False,
-        help=(
-            "Pass enable_thinking=True to the vLLM server. "
-            "Required for models that disable extended thinking by default."
-        ),
-    )
+    _add_input_arg(dec)
+    _add_step_arg(dec)
+    dec.add_argument("--enable-thinking", action="store_true", default=False, help="Pass enable_thinking=True to vLLM.")
 
-    # ------------------------------------------------------------------
-    # eval: judge decomposition results with a (potentially different) model
-    # ------------------------------------------------------------------
-    ev = subs.add_parser(
-        "eval",
-        help="Judge decomposition results produced by the decompose command.",
-    )
+    # eval
+    ev = subs.add_parser("eval", help="Judge decomposition results with a (potentially different) model.")
     _add_common_args(ev)
-    ev.add_argument(
-        "--input", "-i",
-        type=Path,
-        required=True,
-        help="Input JSONL (output from decompose).",
-    )
+    _add_input_arg(ev)
+    _add_step_arg(ev)
+
+    # shard
+    sh = subs.add_parser("shard", help="Split a JSONL into N shards for parallel processing.")
+    sh.add_argument("--input", "-i", type=Path, required=True)
+    sh.add_argument("--n", type=int, required=True, help="Number of shards.")
+    sh.add_argument("--out-dir", type=Path, required=True)
+
+    # merge
+    mg = subs.add_parser("merge", help="Merge shard outputs back into a single JSONL.")
+    mg.add_argument("--in-dir", type=Path, required=True)
+    mg.add_argument("--out", type=Path, required=True)
+
+    # Apply YAML defaults to the relevant subparser before the full parse.
+    subparser_map = {
+        "generate": gen, "filter": filt, "decompose": dec,
+        "eval": ev, "shard": sh, "merge": mg,
+    }
+    if pre_args.config and pre_args.command in subparser_map:
+        try:
+            yaml_defaults = _load_yaml_defaults(pre_args.config, pre_args.command, pre_args.step)
+            subparser_map[pre_args.command].set_defaults(**yaml_defaults)
+        except Exception as e:
+            print(f"[WARNING] Could not load YAML config: {e}", file=sys.stderr)
 
     args = parser.parse_args(argv)
     {
@@ -526,6 +571,8 @@ def main(argv: list[str] | None = None) -> None:
         "filter": _cmd_filter,
         "decompose": _cmd_decompose,
         "eval": _cmd_eval,
+        "shard": _cmd_shard,
+        "merge": _cmd_merge,
     }[args.command](args)
 
 

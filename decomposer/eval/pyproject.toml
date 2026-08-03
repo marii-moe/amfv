@@ -5,8 +5,10 @@ description = "Decomposer eval-set generation for AMFV"
 requires-python = ">=3.13"
 dependencies = [
     "amfv-utils",
+    "jinja2>=3.0",
     "openai>=1.50",
     "pydantic>=2.0",
+    "pyyaml>=6.0",
     "tqdm>=4.0",
 ]
 
