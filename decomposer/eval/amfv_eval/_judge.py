@@ -118,6 +118,7 @@ Respond with valid JSON:
 One boolean per context sentence, in the same order.
 """
 
+MAX_TOKENS = 4096
 
 class _AtomOutput(BaseModel):
     atom_covered: list[bool]
@@ -180,7 +181,7 @@ def judge_atoms(
                 {"role": "system", "content": _ATOM_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=2048,
+            max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length" and not response.choices[0].message.content:
             print("[WARNING] judge_atoms: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
@@ -232,7 +233,7 @@ def judge_operators(
                 {"role": "system", "content": _OPERATOR_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=2048,
+            max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
             print("[WARNING] judge_operators: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
@@ -289,7 +290,7 @@ def judge_source_claims(
                 {"role": "system", "content": _SOURCE_CLAIM_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=2048,
+            max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
             print("[WARNING] judge_source_claims: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
@@ -341,7 +342,7 @@ def judge_operator_awareness(
                 {"role": "system", "content": _OPERATOR_AWARENESS_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=2048,
+            max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
             print("[WARNING] judge_operator_awareness: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
@@ -399,7 +400,7 @@ def judge_context_extraction(
                 {"role": "system", "content": _CONTEXT_SYSTEM},
                 {"role": "user", "content": user_msg},
             ],
-            max_tokens=2048,
+            max_tokens=MAX_TOKENS,
         )
         content = response.choices[0].message.content or ""
         extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted

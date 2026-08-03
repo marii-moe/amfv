@@ -150,6 +150,9 @@ def _judge_examples(
             else 1.0
         )
 
+        eval_score = 0.6 * recall + 0.4 * ctx_precision
+        reward_score = 0.5 * recall + 0.3 * ctx_precision + 0.2 * op_awareness
+
         evaluation = {
             "decomposition_model": latest["model"],
             "judge_model": model,
@@ -159,6 +162,8 @@ def _judge_examples(
             "atom_recall": recall,
             "context_precision": ctx_precision,
             "operator_awareness_score": op_awareness,
+            "eval_score": eval_score,
+            "reward_score": reward_score,
             "passed": passed,
         }
 

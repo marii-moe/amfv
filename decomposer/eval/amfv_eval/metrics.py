@@ -31,6 +31,8 @@ def compute_metrics(records: list[dict]) -> dict:
 
     atom_recalls: list[float] = []
     ctx_precisions: list[float] = []
+    eval_scores: list[float] = []
+    reward_scores: list[float] = []
     op_noticed: dict[str, list[bool]] = defaultdict(list)
     by_n_op: dict[int, dict] = defaultdict(lambda: {"total": 0, "passed": 0})
 
@@ -49,6 +51,11 @@ def compute_metrics(records: list[dict]) -> dict:
         if ctx_extracted:
             ctx_precisions.append(1.0 - sum(ctx_extracted) / len(ctx_extracted))
 
+        if "eval_score" in ev:
+            eval_scores.append(ev["eval_score"])
+        if "reward_score" in ev:
+            reward_scores.append(ev["reward_score"])
+
         for op, val in ev.get("operators_noticed", {}).items():
             op_noticed[op].append(bool(val))
 
@@ -62,6 +69,8 @@ def compute_metrics(records: list[dict]) -> dict:
         "pass_rate": n_passed / total if total else 0.0,
         "atom_recall": _mean(atom_recalls),
         "context_precision": _mean(ctx_precisions) if ctx_precisions else None,
+        "eval_score": _mean(eval_scores) if eval_scores else None,
+        "reward_score": _mean(reward_scores) if reward_scores else None,
         "by_operator": {
             op: _mean([float(v) for v in vals])
             for op, vals in sorted(op_noticed.items())
@@ -100,6 +109,12 @@ def print_report(metrics: dict, *, title: str = "Results") -> None:
     ctx_prec = metrics.get("context_precision")
     if ctx_prec is not None:
         print(f"  Context precision {ctx_prec:.3f}")
+    eval_score = metrics.get("eval_score")
+    if eval_score is not None:
+        print(f"  Eval score       {eval_score:.3f}")
+    reward_score = metrics.get("reward_score")
+    if reward_score is not None:
+        print(f"  Reward score     {reward_score:.3f}")
 
     by_op = metrics.get("by_operator", {})
     if by_op:
