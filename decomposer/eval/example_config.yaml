@@ -7,7 +7,8 @@
 # Shared settings
 base_url: http://localhost:8000/v1
 cache_dir: cache/amfv_eval
-partition: main
+partition: n       # GPU nodes
+cpu_partition: c   # CPU-only nodes (shard/merge jobs)
 account: training
 tensor_parallel: 2
 n_shards: 8

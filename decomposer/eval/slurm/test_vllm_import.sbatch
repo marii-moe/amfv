@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=02:00:00
-#SBATCH --partition=main
+#SBATCH --partition=c
 #SBATCH --account=training
 #SBATCH --export=ALL
 #SBATCH --output=test_vllm_import_%j.log

@@ -140,7 +140,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     # Context fields shared by CPU-only jobs (shard, merge)
     cpu_common: dict = {
         "qos": default_qos,
-        "partition": cfg.get("partition", None),
+        "partition": cfg.get("cpu_partition", cfg.get("partition", None)),
         "account": account,
         "nice": cfg.get("nice", None),
         "mail_type": cfg.get("mail_type", None),
