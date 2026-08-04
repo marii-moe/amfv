@@ -1,31 +1,27 @@
 #!/usr/bin/env bash
-#SBATCH --job-name=amfv-test-vllm
-#SBATCH --nodes=1
-#SBATCH --ntasks=1
-#SBATCH --gpus-per-task=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=00:30:00
-#SBATCH --partition=main
-#SBATCH --account=training
-#SBATCH --export=ALL
-#SBATCH --output=test_vllm_%j.log
-#SBATCH --error=test_vllm_%j.log
+# Submits: import job (CPU, 2h) → GPU verification job (depends on import).
+# Run this script directly with bash, not sbatch.
+#
+# Usage:
+#   bash decomposer/eval/slurm/test_vllm_image.sbatch [docker-image-or-sqsh-path]
+#
+# Example:
+#   bash decomposer/eval/slurm/test_vllm_image.sbatch docker://vllm/vllm-openai:latest
 
 set -euo pipefail
 
-VLLM_IMAGE="${VLLM_IMAGE:-docker://vllm/vllm-openai:latest}"
-echo "==> Testing container: ${VLLM_IMAGE}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VLLM_IMAGE="${1:-docker://vllm/vllm-openai:latest}"
 
-srun --ntasks=1 \
-     --container-image="${VLLM_IMAGE}" \
-     python3 -c "
-import torch
-import vllm
-print('torch version:', torch.__version__)
-print('CUDA version (torch):', torch.version.cuda)
-print('vllm version:', vllm.__version__)
-print('GPU available:', torch.cuda.is_available())
-if torch.cuda.is_available():
-    print('GPU:', torch.cuda.get_device_name(0))
-"
+echo "==> Image: ${VLLM_IMAGE}"
+
+IMPORT_JOB=$(sbatch --parsable \
+    --export="ALL,VLLM_IMAGE=${VLLM_IMAGE}" \
+    "${SCRIPT_DIR}/test_vllm_import.sbatch")
+echo "==> Import job: ${IMPORT_JOB}  (tail -f test_vllm_import_${IMPORT_JOB}.log)"
+
+TEST_JOB=$(sbatch --parsable \
+    --dependency="afterok:${IMPORT_JOB}" \
+    --export="ALL,VLLM_IMAGE=${VLLM_IMAGE}" \
+    "${SCRIPT_DIR}/test_vllm_check.sbatch")
+echo "==> GPU test job: ${TEST_JOB}  (tail -f test_vllm_check_${TEST_JOB}.log)"
