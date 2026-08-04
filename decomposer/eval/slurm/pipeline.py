@@ -46,6 +46,7 @@ def sbatch(
     context: dict,
     dependency: str | None = None,
     array: int | None = None,
+    max_concurrent: int | None = None,
     dry_run: bool = False,
 ) -> str:
     """Render a Jinja2 template, write it to a temp file, and submit with sbatch."""
@@ -67,7 +68,10 @@ def sbatch(
     if dependency:
         cmd += [f"--dependency=afterok:{dependency}"]
     if array is not None:
-        cmd += [f"--array=0-{array - 1}"]
+        array_spec = f"0-{array - 1}"
+        if max_concurrent:
+            array_spec += f"%{max_concurrent}"
+        cmd += [f"--array={array_spec}"]
     cmd.append(tmp_path)
 
     if dry_run:
@@ -105,6 +109,8 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     tensor_parallel: int = cfg.get("tensor_parallel", 4)
     n_shards: int = cfg.get("n_shards", 8)
     default_qos: str | None = cfg.get("qos", None)
+    max_gpus: int | None = cfg.get("max_gpus", None)
+    max_concurrent_shards: int | None = max_gpus // tensor_parallel if max_gpus else None
     output_dir = str(_resolve(cfg["output_dir"]) if "output_dir" in cfg else _BASE_DIR)
 
     def qos_for(step_cfg: dict) -> str | None:
@@ -239,6 +245,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
                 },
                 dependency=after_shard,
                 array=n_shards,
+                max_concurrent=max_concurrent_shards,
                 dry_run=dry_run,
             )
 
@@ -314,6 +321,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
                     },
                     dependency=after_eval_shard,
                     array=n_shards,
+                    max_concurrent=max_concurrent_shards,
                     dry_run=dry_run,
                 )
 
