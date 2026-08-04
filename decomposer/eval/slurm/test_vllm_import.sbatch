@@ -16,7 +16,8 @@ set -euo pipefail
 VLLM_IMAGE="${VLLM_IMAGE:-docker://vllm/vllm-openai:latest}"
 echo "==> Importing/caching container image: ${VLLM_IMAGE}"
 
-srun --ntasks=1 \
+# NVIDIA_VISIBLE_DEVICES=void disables the GPU hook so the container starts on CPU nodes
+NVIDIA_VISIBLE_DEVICES=void srun --ntasks=1 \
      --container-image="${VLLM_IMAGE}" \
      echo "Image cached OK"
 
