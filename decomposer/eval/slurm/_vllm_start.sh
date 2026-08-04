@@ -10,11 +10,12 @@
 
 _VLLM_MODEL="${1:?model argument required}"
 _VLLM_TP="${2:-4}"
-_VLLM_PORT="${3:-8000}"
+_VLLM_BIN="${3:-vllm}"
+_VLLM_PORT="${4:-8000}"
 
 echo "[vllm] Starting ${_VLLM_MODEL} (tp=${_VLLM_TP}, port=${_VLLM_PORT})…"
 
-vllm serve "${_VLLM_MODEL}" \
+"${_VLLM_BIN}" serve "${_VLLM_MODEL}" \
     --tensor-parallel-size "${_VLLM_TP}" \
     --port "${_VLLM_PORT}" \
     &

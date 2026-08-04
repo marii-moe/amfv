@@ -134,6 +134,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
         "output_dir": output_dir,
         "slurm_dir": str(slurm_dir),
         "hf_home": str(_BASE_DIR / ".cache"),
+        "vllm_bin": str(_resolve(cfg["vllm_bin"]) if "vllm_bin" in cfg else slurm_dir / ".vllm_env" / "bin" / "vllm"),
     }
 
     # Context fields shared by CPU-only jobs (shard, merge)

@@ -21,8 +21,6 @@ dev = [
 
 [tool.uv]
 package = false
-environments = ["sys_platform == 'linux'"]
-index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
 amfv-datasets = { workspace = true }
@@ -31,9 +29,6 @@ amfv-eval = { workspace = true }
 amfv-search = { workspace = true }
 amfv-utils = { workspace = true }
 amfv-verifier = { workspace = true }
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
 
 [tool.uv.workspace]
 members = [
