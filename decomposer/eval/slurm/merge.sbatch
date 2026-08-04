@@ -29,6 +29,8 @@
 set -euo pipefail
 mkdir -p "{{ output_dir }}/slurm"
 
+source "{{ slurm_dir }}/../.venv/bin/activate"
+
 amfv-eval merge \
     --in-dir "{{ in_dir }}" \
     --out "{{ out }}"

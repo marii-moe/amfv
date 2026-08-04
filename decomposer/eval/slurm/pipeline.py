@@ -145,6 +145,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
         "mail_type": cfg.get("mail_type", None),
         "mail_user": cfg.get("mail_user", None),
         "output_dir": output_dir,
+        "slurm_dir": str(slurm_dir),
     }
 
     prev_job: str | None = None

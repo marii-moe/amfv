@@ -36,6 +36,7 @@
 set -euo pipefail
 mkdir -p "{{ output_dir }}/slurm"
 
+source "{{ slurm_dir }}/../.venv/bin/activate"
 export HF_HOME="{{ hf_home }}"
 source "{{ slurm_dir }}/_vllm_start.sh" "{{ model }}" "{{ gpus }}"
 

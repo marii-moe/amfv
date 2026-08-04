@@ -8,6 +8,9 @@
 #
 # Registers an EXIT trap that kills vLLM when the sourcing script exits.
 
+_VLLM_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${_VLLM_SCRIPT_DIR}/../.venv/bin/activate"
+
 _VLLM_MODEL="${1:?model argument required}"
 _VLLM_TP="${2:-4}"
 _VLLM_PORT="${3:-8000}"
