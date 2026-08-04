@@ -22,6 +22,7 @@ dev = [
 [tool.uv]
 package = false
 environments = ["sys_platform == 'linux'"]
+index-strategy = "unsafe-best-match"
 
 [tool.uv.sources]
 amfv-datasets = { workspace = true }
