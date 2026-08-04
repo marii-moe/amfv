@@ -122,6 +122,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
         "mail_user": cfg.get("mail_user", None),
         "output_dir": output_dir,
         "slurm_dir": str(slurm_dir),
+        "hf_home": str(_BASE_DIR / ".cache"),
     }
 
     # Context fields shared by CPU-only jobs (shard, merge)
