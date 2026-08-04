@@ -22,7 +22,12 @@ _VLLM_PORT="${4:-8000}"
 echo "[vllm] Starting ${_VLLM_MODEL} (tp=${_VLLM_TP}, port=${_VLLM_PORT})…"
 
 if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
-    # enroot/pyxis mode: run vllm serve inside a container via srun
+    # enroot/pyxis mode: run vllm serve inside a container via srun.
+    # Point enroot cache at a shared NFS path so nodes share the .sqsh.
+    _ENROOT_CACHE="${ENROOT_CACHE:-${HOME}/.enroot/cache}"
+    mkdir -p "${_ENROOT_CACHE}"
+    export LABLESS_ENROOT_CACHE_PATH="${_ENROOT_CACHE}"
+
     echo "[vllm] Using container: ${_VLLM_ARG3}"
     srun --ntasks=1 \
          --container-image="${_VLLM_ARG3}" \

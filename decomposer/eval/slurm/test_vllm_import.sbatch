@@ -13,12 +13,19 @@
 
 set -euo pipefail
 
-VLLM_IMAGE="${VLLM_IMAGE:-docker://vllm/vllm-openai:latest}"
-echo "==> Importing/caching container image: ${VLLM_IMAGE}"
+# Store the .sqsh in home so all nodes can find it (home is on shared NFS).
+ENROOT_CACHE="${ENROOT_CACHE:-${HOME}/.enroot/cache}"
+mkdir -p "${ENROOT_CACHE}"
+export LABLESS_ENROOT_CACHE_PATH="${ENROOT_CACHE}"
 
-# NVIDIA_VISIBLE_DEVICES=void disables the GPU hook so the container starts on CPU nodes
+VLLM_IMAGE="${VLLM_IMAGE:-docker://vllm/vllm-openai:latest}"
+echo "==> Importing container image: ${VLLM_IMAGE}"
+echo "==> Cache path: ${ENROOT_CACHE}"
+
+# NVIDIA_VISIBLE_DEVICES=void disables the GPU hook so the container starts on CPU nodes.
 NVIDIA_VISIBLE_DEVICES=void srun --ntasks=1 \
      --container-image="${VLLM_IMAGE}" \
      echo "Image cached OK"
 
-echo "==> Done. Image is now cached on this node."
+echo "==> Done. sqsh stored in ${ENROOT_CACHE}"
+ls -lh "${ENROOT_CACHE}/"
