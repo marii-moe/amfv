@@ -21,6 +21,7 @@ dev = [
 
 [tool.uv]
 package = false
+environments = ["sys_platform == 'linux'"]
 
 [tool.uv.sources]
 amfv-datasets = { workspace = true }
