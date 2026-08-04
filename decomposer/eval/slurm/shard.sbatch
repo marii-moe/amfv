@@ -29,8 +29,6 @@
 set -euo pipefail
 mkdir -p "{{ output_dir }}/slurm"
 
-source "{{ slurm_dir }}/../.venv/bin/activate"
-
 amfv-eval shard \
     --input "{{ input }}" \
     --n "{{ n_shards }}" \
