@@ -33,4 +33,10 @@ print('vllm:      ', vllm.__version__)
 print('GPU avail: ', torch.cuda.is_available())
 if torch.cuda.is_available():
     print('GPU:       ', torch.cuda.get_device_name(0))
+
+from vllm.model_executor.models import ModelRegistry
+supported = ModelRegistry.get_supported_archs()
+qwen3 = [a for a in supported if 'qwen3' in a.lower()]
+print('Qwen3 archs:', qwen3)
+print('qwen3_5_moe:', 'Qwen3MoeForCausalLM' in supported or 'qwen3_5_moe' in str(supported))
 "
