@@ -17,7 +17,6 @@ echo "[vllm] Starting ${_VLLM_MODEL} (tp=${_VLLM_TP}, port=${_VLLM_PORT})…"
 vllm serve "${_VLLM_MODEL}" \
     --tensor-parallel-size "${_VLLM_TP}" \
     --port "${_VLLM_PORT}" \
-    --disable-log-requests \
     &
 VLLM_PID=$!
 
