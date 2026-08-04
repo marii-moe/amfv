@@ -8,6 +8,7 @@
 base_url: http://localhost:8000/v1
 cache_dir: cache/amfv_eval
 partition: main
+account: training
 tensor_parallel: 2
 n_shards: 8
 max_gpus: 8  # caps concurrent array tasks: max_gpus / tensor_parallel = 4 shards at once

@@ -118,12 +118,15 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     def qos_for(step_cfg: dict) -> str | None:
         return step_cfg.get("qos", default_qos)
 
+    account: str | None = cfg.get("account", None)
+
     # Context fields shared by all GPU jobs
     gpu_common: dict = {
         "config": str(config_path.resolve()),
         "gpus": tensor_parallel,
         "cpus_per_gpu": cfg.get("cpus_per_gpu", 16),
         "partition": cfg.get("partition", None),
+        "account": account,
         "slurm_resume": cfg.get("slurm_resume", False),
         "nice": cfg.get("nice", None),
         "mail_type": cfg.get("mail_type", None),
@@ -137,6 +140,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     cpu_common: dict = {
         "qos": default_qos,
         "partition": cfg.get("partition", None),
+        "account": account,
         "nice": cfg.get("nice", None),
         "mail_type": cfg.get("mail_type", None),
         "mail_user": cfg.get("mail_user", None),

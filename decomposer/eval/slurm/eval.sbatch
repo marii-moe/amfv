@@ -26,6 +26,9 @@
 {% if mail_user %}
 #SBATCH --mail-user={{ mail_user }}
 {% endif %}
+{% if account %}
+#SBATCH --account={{ account }}
+{% endif %}
 #SBATCH --export=ALL
 #SBATCH --output="{{ output_dir }}/slurm/job_%A_%a.log"
 #SBATCH --error="{{ output_dir }}/slurm/job_%A_%a.log"
