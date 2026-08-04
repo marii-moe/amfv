@@ -83,10 +83,12 @@ def sbatch(
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         job_id = result.stdout.strip()
+        os.unlink(tmp_path)
         print(f"Submitted {template.name} → job {job_id}")
         return job_id
-    finally:
-        os.unlink(tmp_path)
+    except subprocess.CalledProcessError as e:
+        print(f"sbatch failed for {template.name} (rendered script: {tmp_path}):\n{e.stderr}", flush=True)
+        raise
 
 
 def is_done(marker: Path) -> bool:
