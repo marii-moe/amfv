@@ -7,50 +7,37 @@
 # Shared settings
 base_url: http://localhost:8000/v1
 cache_dir: cache/amfv_eval
-partition: gpu
+partition: main
 tensor_parallel: 4
 n_shards: 8
 qos: normal  # default; override per-step below
 
 generate:
-  model: Qwen/QwQ-32B
+  model: Qwen/Qwen3.6-35B-A3B
   qos: normal
   splits: [train, validation]
-  n_examples: 1000
+  #+n_examples: 1000
   seed: 42
   out: generated.jsonl
   failures: generated_fail.jsonl
 
+# Below can have multiple entries, one per model. Each entry can override the shared settings above.
 filter:
-  - model: Qwen/QwQ-32B-Preview
+  - model: Qwen/Qwen3.6-35B-A3B
     qos: normal
     input: generated.jsonl
     out: filtered_1.jsonl
     failures: filtered_1_fail.jsonl
-  - model: meta-llama/Llama-3.1-70B-Instruct
-    qos: normal
-    input: filtered_1.jsonl
-    out: filtered_2.jsonl
-    failures: filtered_2_fail.jsonl
 
 decompose:
-  - model: Qwen/QwQ-32B
+  - model: Qwen/Qwen3.6-35B-A3B
     qos: low
     enable_thinking: true
-    out: decomposed_qwq.jsonl
-  - model: meta-llama/Llama-3.1-70B-Instruct
-    qos: low
-    enable_thinking: false
-    out: decomposed_llama.jsonl
+    out: decomposed_35.jsonl
 
 eval:
-  - model: Qwen/QwQ-72B
+  - model: Qwen/Qwen3.6-35B-A3B
     qos: bottom
-    input: decomposed_qwq.jsonl
-    out: results_qwq.jsonl
-    failures: results_qwq_fail.jsonl
-  - model: Qwen/QwQ-72B
-    qos: bottom
-    input: decomposed_llama.jsonl
-    out: results_llama.jsonl
-    failures: results_llama_fail.jsonl
+    input: decomposed_35.jsonl
+    out: results_35.jsonl
+    failures: results_35_fail.jsonl
