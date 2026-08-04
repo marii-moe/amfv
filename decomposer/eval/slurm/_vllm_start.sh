@@ -1,24 +1,45 @@
 #!/usr/bin/env bash
 # Source this file to start a vLLM server and export VLLM_BASE_URL.
-# Usage: source _vllm_start.sh <model> <tensor_parallel> [port]
+#
+# Usage (enroot/pyxis mode — recommended):
+#   source _vllm_start.sh <model> <tensor_parallel> <container_image> [port]
+#
+# Usage (direct binary mode — fallback):
+#   source _vllm_start.sh <model> <tensor_parallel> <vllm_bin_path> [port]
+#
+# The third argument is auto-detected: if it ends in .sqsh or starts with
+# docker:// it is treated as a container image; otherwise as a binary path.
 #
 # Sets:
 #   VLLM_BASE_URL  — OpenAI-compatible base URL for the started server
 #   VLLM_PID       — PID of the background vllm process
-#
-# Registers an EXIT trap that kills vLLM when the sourcing script exits.
 
 _VLLM_MODEL="${1:?model argument required}"
 _VLLM_TP="${2:-4}"
-_VLLM_BIN="${3:-vllm}"
+_VLLM_ARG3="${3:-vllm}"
 _VLLM_PORT="${4:-8000}"
 
 echo "[vllm] Starting ${_VLLM_MODEL} (tp=${_VLLM_TP}, port=${_VLLM_PORT})…"
 
-"${_VLLM_BIN}" serve "${_VLLM_MODEL}" \
-    --tensor-parallel-size "${_VLLM_TP}" \
-    --port "${_VLLM_PORT}" \
-    &
+if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
+    # enroot/pyxis mode: run vllm serve inside a container via srun
+    echo "[vllm] Using container: ${_VLLM_ARG3}"
+    srun --ntasks=1 \
+         --container-image="${_VLLM_ARG3}" \
+         --container-mounts="${HF_HOME}:${HF_HOME}" \
+         --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN" \
+         vllm serve "${_VLLM_MODEL}" \
+             --tensor-parallel-size "${_VLLM_TP}" \
+             --port "${_VLLM_PORT}" \
+         &
+else
+    # direct binary mode
+    echo "[vllm] Using binary: ${_VLLM_ARG3}"
+    "${_VLLM_ARG3}" serve "${_VLLM_MODEL}" \
+        --tensor-parallel-size "${_VLLM_TP}" \
+        --port "${_VLLM_PORT}" \
+        &
+fi
 VLLM_PID=$!
 
 trap 'echo "[vllm] Stopping vLLM (pid ${VLLM_PID})…"; kill "${VLLM_PID}" 2>/dev/null; wait "${VLLM_PID}" 2>/dev/null' EXIT

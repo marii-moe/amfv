@@ -49,7 +49,7 @@ fi
 mkdir -p "{{ out_dir }}"
 
 export HF_HOME="{{ hf_home }}"
-source "{{ slurm_dir }}/_vllm_start.sh" "{{ model }}" "{{ gpus }}" "{{ vllm_bin }}"
+source "{{ slurm_dir }}/_vllm_start.sh" "{{ model }}" "{{ gpus }}" "{{ vllm_image }}"
 
 amfv-eval decompose \
     --config "{{ config }}" \
