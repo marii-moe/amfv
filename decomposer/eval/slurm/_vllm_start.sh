@@ -37,7 +37,7 @@ if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
     echo "[vllm] Using container: ${_VLLM_ARG3}"
     srun --ntasks=1 \
          --container-image="${_VLLM_ARG3}" \
-         --container-mounts="${HF_HOME}:${HF_HOME},${_VLLM_LOG_DIR}:${_VLLM_LOG_DIR}" \
+         --container-mounts="${HF_HOME}:${HF_HOME},${_VLLM_LOG_DIR}:${_VLLM_LOG_DIR},/dev/shm:/dev/shm" \
          --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN" \
          bash -c "vllm serve '${_VLLM_MODEL}' \
              --tensor-parallel-size '${_VLLM_TP}' \
