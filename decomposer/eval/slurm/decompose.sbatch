@@ -26,6 +26,9 @@
 {% if mail_user %}
 #SBATCH --mail-user={{ mail_user }}
 {% endif %}
+{% if time_limit %}
+#SBATCH --time={{ time_limit }}
+{% endif %}
 {% if account %}
 #SBATCH --account={{ account }}
 {% endif %}

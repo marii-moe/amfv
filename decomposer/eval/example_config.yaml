@@ -14,6 +14,7 @@ tensor_parallel: 2
 n_shards: 8
 max_gpus: 8  # caps concurrent array tasks: max_gpus / tensor_parallel = 4 shards at once
 qos: normal  # default; override per-step below
+time_limit: "04:00:00"  # per-job wall time; override per-step if needed
 
 generate:
   model: Qwen/Qwen3.6-35B-A3B
