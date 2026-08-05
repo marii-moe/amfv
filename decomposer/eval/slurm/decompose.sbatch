@@ -49,6 +49,7 @@ fi
 mkdir -p "{{ out_dir }}"
 
 export HF_HOME="{{ hf_home }}"
+export SLURM_LOG_DIR="{{ output_dir }}/slurm"
 source "{{ slurm_dir }}/_vllm_start.sh" "{{ model }}" "{{ gpus }}" "{{ vllm_image }}"
 
 amfv-eval decompose \
