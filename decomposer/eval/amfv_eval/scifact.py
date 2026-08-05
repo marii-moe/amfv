@@ -109,19 +109,21 @@ def _cached_path(split: Literal["train", "validation", "test"]) -> Path:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         print(f"Downloading SciFact {split} split from HuggingFace…", flush=True)
         try:
-            from huggingface_hub import hf_hub_download  # type: ignore[import]
             import shutil
-            src = hf_hub_download(
-                repo_id="allenai/scifact",
-                filename=_HF_REPO_FILES[split],
-                repo_type="dataset",
-            )
+            from huggingface_hub import hf_hub_download, list_repo_files  # type: ignore[import]
+            all_files = list(list_repo_files("allenai/scifact", repo_type="dataset"))
+            keywords = {"train": ["train"], "validation": ["dev", "validation"], "test": ["test"]}[split]
+            matches = [f for f in all_files if f.endswith(".jsonl") and any(k in f.lower() for k in keywords)]
+            if not matches:
+                raise FileNotFoundError(
+                    f"No JSONL for '{split}' in allenai/scifact. Repo contains: {all_files}"
+                )
+            src = hf_hub_download(repo_id="allenai/scifact", filename=matches[0], repo_type="dataset")
             shutil.copy2(src, local)
         except Exception as e:
             raise RuntimeError(
                 f"Could not download SciFact {split} split. "
-                "Place the file manually at: "
-                f"{local}"
+                f"Place the file manually at: {local}"
             ) from e
     return local
 
