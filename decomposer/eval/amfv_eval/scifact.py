@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.request
 from collections import defaultdict
 from pathlib import Path
 from typing import Literal
@@ -12,14 +11,16 @@ from amfv_eval.types import ClaimGroup, ScifactClaim
 
 __all__ = ["load_claims", "group_claims"]
 
-_GITHUB_BASES = [
-    "https://raw.githubusercontent.com/allenai/scifact/main/data",
-    "https://raw.githubusercontent.com/allenai/scifact/master/data",
-]
 _SPLIT_FILES: dict[str, str] = {
     "train": "claims_train.jsonl",
     "validation": "claims_dev.jsonl",
     "test": "claims_test.jsonl",
+}
+# HF split names differ from our internal names
+_HF_SPLIT: dict[str, str] = {
+    "train": "train",
+    "validation": "validation",
+    "test": "test",
 }
 _CACHE_DIR = Path.home() / ".cache" / "amfv_eval" / "scifact"
 
@@ -101,23 +102,24 @@ def _local_path(split: Literal["train", "validation", "test"], data_dir: Path) -
 
 
 def _cached_path(split: Literal["train", "validation", "test"]) -> Path:
-    """Return local path to the split file, downloading if absent."""
+    """Return local path to the split file, downloading from HF if absent."""
     filename = _SPLIT_FILES[split]
     local = _CACHE_DIR / filename
     if not local.exists():
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading SciFact {split} split from GitHub…", flush=True)
-        for base in _GITHUB_BASES:
-            try:
-                urllib.request.urlretrieve(f"{base}/{filename}", local)
-                return local
-            except urllib.error.HTTPError:
-                continue
-        raise RuntimeError(
-            f"Could not download SciFact {split} split from GitHub. "
-            "Check your internet connection or place the file manually at: "
-            f"{local}"
-        )
+        print(f"Downloading SciFact {split} split from HuggingFace…", flush=True)
+        try:
+            from datasets import load_dataset  # type: ignore[import]
+            ds = load_dataset("allenai/scifact", split=_HF_SPLIT[split], trust_remote_code=False)
+            with local.open("w") as f:
+                for row in ds:
+                    f.write(json.dumps(row) + "\n")
+        except Exception as e:
+            raise RuntimeError(
+                f"Could not download SciFact {split} split. "
+                "Place the file manually at: "
+                f"{local}"
+            ) from e
     return local
 
 
