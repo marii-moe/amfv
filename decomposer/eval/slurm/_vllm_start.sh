@@ -57,10 +57,11 @@ VLLM_PID=$!
 trap 'echo "[vllm] Stopping vLLM (pid ${VLLM_PID})…"; kill "${VLLM_PID}" 2>/dev/null; wait "${VLLM_PID}" 2>/dev/null' EXIT
 
 export VLLM_BASE_URL="http://localhost:${_VLLM_PORT}/v1"
+_VLLM_HEALTH_URL="http://localhost:${_VLLM_PORT}/health"
 
 echo "[vllm] Waiting for server to be ready (timeout ${_VLLM_TIMEOUT}s)…"
 for i in $(seq 1 "${_VLLM_TIMEOUT}"); do
-    if curl -sf "${VLLM_BASE_URL}/health" > /dev/null 2>&1; then
+    if curl -sf "${_VLLM_HEALTH_URL}" > /dev/null 2>&1; then
         echo "[vllm] Ready after ${i}s"
         break
     fi
@@ -76,7 +77,7 @@ for i in $(seq 1 "${_VLLM_TIMEOUT}"); do
     sleep 1
 done
 
-if ! curl -sf "${VLLM_BASE_URL}/health" > /dev/null 2>&1; then
+if ! curl -sf "${_VLLM_HEALTH_URL}" > /dev/null 2>&1; then
     echo "[vllm] Server did not become healthy within ${_VLLM_TIMEOUT}s — last lines of ${_VLLM_LOG}:" >&2
     tail -20 "${_VLLM_LOG}" >&2
     exit 1
