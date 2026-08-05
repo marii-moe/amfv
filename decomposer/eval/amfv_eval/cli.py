@@ -346,7 +346,8 @@ def _cmd_generate(args: argparse.Namespace) -> None:
         examples = generate_split(
             groups, n_claims=n_claims, split=split_key,
             client=client, model=args.model, cache=cache,
-            seed=args.seed, target=target, debug=args.debug,
+            seed=args.seed, target=target,
+            concurrency=args.concurrency, debug=args.debug,
         )
         raw_dicts = [ex.to_dict() for ex in examples]
         print(f"[{split}] {len(raw_dicts)} passages generated. Validating…", flush=True)
@@ -544,6 +545,7 @@ def main(argv: list[str] | None = None) -> None:
     gen.add_argument("--splits", nargs="+", choices=["train", "validation", "test"], default=["train", "validation", "test"])
     gen.add_argument("--data-dir", type=Path, default=None, help="Directory containing SciFact JSONL files.")
     gen.add_argument("--n-examples", type=int, default=None, help="Examples to generate per split (default: n_claims × 4).")
+    gen.add_argument("--concurrency", type=int, default=8, help="Concurrent requests to the vLLM server (default: 8).")
 
     # filter
     filt = subs.add_parser("filter", help="Re-validate an existing dataset with a different judge model.")

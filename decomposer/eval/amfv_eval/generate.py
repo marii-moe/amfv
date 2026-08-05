@@ -18,6 +18,7 @@ reruns are free.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import random
 from typing import Literal
@@ -236,6 +237,7 @@ def generate_split(
     cache: GenerationCache,
     seed: int = 42,
     target: int | None = None,
+    concurrency: int = 8,
     debug: bool = False,
 ) -> list[EvalExample]:
     """Generate eval examples for one split.
@@ -251,6 +253,7 @@ def generate_split(
         seed: Random seed for reproducibility.
         target: Override the number of examples to generate.  Defaults to
             ``n_claims * 4``.
+        concurrency: Number of concurrent requests to the vLLM server.
 
     Returns:
         List of generated :class:`EvalExample` objects.
@@ -268,50 +271,68 @@ def generate_split(
     attempts = 0
     example_index = 0
 
-    with tqdm(total=target, desc=f"[{split}] generating", unit="ex") as bar:
-        while len(examples) < target and attempts < attempt_cap:
+    def _next_candidate() -> tuple[list[ScifactClaim], list[str]] | None:
+        nonlocal attempts
+        while attempts < attempt_cap:
             attempts += 1
-            if debug:
-                print(f"[generate] attempt {attempts}/{attempt_cap}", flush=True)
             group = rng.choices(groups, weights=weights, k=1)[0]
-
             n_ops = rng.choices(
                 list(_OP_COUNT_WEIGHTS.keys()),
                 weights=list(_OP_COUNT_WEIGHTS.values()),
                 k=1,
             )[0]
-
             n_claims_needed = min(3, max(2, n_ops))
             if len(group.claims) < n_claims_needed:
                 n_claims_needed = min(len(group.claims), 2)
-
             sampled_claims = list(rng.sample(list(group.claims), n_claims_needed))
             if _any_too_similar(sampled_claims):
                 continue
-
             op_names = _sample_operators(rng, n_ops)
-
             dedup_key = json.dumps(
                 [sorted(c.id for c in sampled_claims), sorted(op_names)], sort_keys=True
             )
             if dedup_key in seen:
                 continue
             seen.add(dedup_key)
+            return sampled_claims, op_names
+        return None
 
-            example = generate_example(
-                sampled_claims,
-                op_names,
-                client=client,
-                model=model,
-                cache=cache,
-                split=split,
-                example_index=example_index,
-                debug=debug,
-            )
-            if example is not None:
-                examples.append(example)
-                example_index += 1
-                bar.update(1)
+    with tqdm(total=target, desc=f"[{split}] generating", unit="ex") as bar:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+            pending: dict[concurrent.futures.Future, None] = {}
+
+            def _submit_one() -> None:
+                cand = _next_candidate()
+                if cand is None:
+                    return
+                sampled_claims, op_names = cand
+                f = executor.submit(
+                    generate_example,
+                    sampled_claims, op_names,
+                    client=client, model=model, cache=cache,
+                    split=split, example_index=0, debug=debug,
+                )
+                pending[f] = None
+
+            for _ in range(concurrency):
+                if len(examples) + len(pending) >= target:
+                    break
+                _submit_one()
+
+            while pending and len(examples) < target:
+                done, _ = concurrent.futures.wait(
+                    list(pending), return_when=concurrent.futures.FIRST_COMPLETED
+                )
+                for f in done:
+                    del pending[f]
+                    result = f.result()
+                    if result is not None and len(examples) < target:
+                        result.id = f"{split}_{example_index:05d}"
+                        examples.append(result)
+                        example_index += 1
+                        bar.update(1)
+                    if len(examples) + len(pending) < target:
+                        _submit_one()
 
     return examples
 
