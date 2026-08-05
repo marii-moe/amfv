@@ -16,11 +16,11 @@ _SPLIT_FILES: dict[str, str] = {
     "validation": "claims_dev.jsonl",
     "test": "claims_test.jsonl",
 }
-# HF split names differ from our internal names
-_HF_SPLIT: dict[str, str] = {
-    "train": "train",
-    "validation": "validation",
-    "test": "test",
+# Paths of the raw JSONL files inside the allenai/scifact HF dataset repo.
+_HF_REPO_FILES: dict[str, str] = {
+    "train": "data/claims_train.jsonl",
+    "validation": "data/claims_dev.jsonl",
+    "test": "data/claims_test.jsonl",
 }
 _CACHE_DIR = Path.home() / ".cache" / "amfv_eval" / "scifact"
 
@@ -109,11 +109,14 @@ def _cached_path(split: Literal["train", "validation", "test"]) -> Path:
         _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         print(f"Downloading SciFact {split} split from HuggingFace…", flush=True)
         try:
-            from datasets import load_dataset  # type: ignore[import]
-            ds = load_dataset("allenai/scifact", split=_HF_SPLIT[split], trust_remote_code=False)
-            with local.open("w") as f:
-                for row in ds:
-                    f.write(json.dumps(row) + "\n")
+            from huggingface_hub import hf_hub_download  # type: ignore[import]
+            import shutil
+            src = hf_hub_download(
+                repo_id="allenai/scifact",
+                filename=_HF_REPO_FILES[split],
+                repo_type="dataset",
+            )
+            shutil.copy2(src, local)
         except Exception as e:
             raise RuntimeError(
                 f"Could not download SciFact {split} split. "
