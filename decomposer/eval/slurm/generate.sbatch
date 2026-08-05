@@ -7,6 +7,7 @@
 #SBATCH --exclusive
 {% else %}
 #SBATCH --cpus-per-gpu={{ cpus_per_gpu }}
+#SBATCH --mem-per-gpu=120G
 {% endif %}
 {% if partition %}
 #SBATCH --partition={{ partition }}
