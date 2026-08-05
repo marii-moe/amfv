@@ -316,6 +316,10 @@ def _validate_dataset_examples(
 
 
 def _cmd_generate(args: argparse.Namespace) -> None:
+    if args.model is None:
+        sys.exit("amfv-eval generate: error: --model is required (or set via --config)")
+    if args.out is None:
+        sys.exit("amfv-eval generate: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
     _ensure_parent(args.failures)
 
@@ -361,6 +365,12 @@ def _cmd_generate(args: argparse.Namespace) -> None:
 
 
 def _cmd_filter(args: argparse.Namespace) -> None:
+    if args.model is None:
+        sys.exit("amfv-eval filter: error: --model is required (or set via --config)")
+    if args.input is None:
+        sys.exit("amfv-eval filter: error: --input is required (or set via --config)")
+    if args.out is None:
+        sys.exit("amfv-eval filter: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
     _ensure_parent(args.failures)
 
@@ -384,6 +394,12 @@ def _cmd_filter(args: argparse.Namespace) -> None:
 
 
 def _cmd_decompose(args: argparse.Namespace) -> None:
+    if args.model is None:
+        sys.exit("amfv-eval decompose: error: --model is required (or set via --config)")
+    if args.input is None:
+        sys.exit("amfv-eval decompose: error: --input is required (or set via --config)")
+    if args.out is None:
+        sys.exit("amfv-eval decompose: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
 
     examples = _load_jsonl(args.input)
@@ -411,6 +427,12 @@ def _cmd_decompose(args: argparse.Namespace) -> None:
 
 
 def _cmd_eval(args: argparse.Namespace) -> None:
+    if args.model is None:
+        sys.exit("amfv-eval eval: error: --model is required (or set via --config)")
+    if args.input is None:
+        sys.exit("amfv-eval eval: error: --input is required (or set via --config)")
+    if args.out is None:
+        sys.exit("amfv-eval eval: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
     _ensure_parent(args.failures)
 
@@ -476,20 +498,20 @@ def _cmd_merge(args: argparse.Namespace) -> None:
 
 def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--config", type=Path, default=None, help="YAML config file.")
-    p.add_argument("--model", required=True, help="Model name as registered in the vLLM server.")
+    p.add_argument("--model", default=None, help="Model name as registered in the vLLM server.")
     p.add_argument(
         "--base-url",
         default=_DEFAULT_BASE_URL,
         help=f"vLLM OpenAI-compatible endpoint (default: {_DEFAULT_BASE_URL}).",
     )
     p.add_argument("--cache-dir", type=Path, default=None, help="LLM output cache directory.")
-    p.add_argument("--out", type=Path, required=True, help="Output JSONL for passing examples.")
+    p.add_argument("--out", type=Path, default=None, help="Output JSONL for passing examples.")
     p.add_argument("--failures", type=Path, default=None, help="Output JSONL for failing examples (optional).")
     p.add_argument("--debug", action="store_true", default=False, help="Print each chat completion response.")
 
 
 def _add_input_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--input", "-i", type=Path, required=True, help="Input JSONL.")
+    p.add_argument("--input", "-i", type=Path, default=None, help="Input JSONL.")
 
 
 def _add_step_arg(p: argparse.ArgumentParser) -> None:
