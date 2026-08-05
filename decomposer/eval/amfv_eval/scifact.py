@@ -16,12 +16,6 @@ _SPLIT_FILES: dict[str, str] = {
     "validation": "claims_dev.jsonl",
     "test": "claims_test.jsonl",
 }
-# Paths of the raw JSONL files inside the allenai/scifact HF dataset repo.
-_HF_REPO_FILES: dict[str, str] = {
-    "train": "data/claims_train.jsonl",
-    "validation": "data/claims_dev.jsonl",
-    "test": "data/claims_test.jsonl",
-}
 _CACHE_DIR = Path.home() / ".cache" / "amfv_eval" / "scifact"
 
 _LABEL_MAP = {
@@ -101,31 +95,49 @@ def _local_path(split: Literal["train", "validation", "test"], data_dir: Path) -
     return path
 
 
+_SCIFACT_S3_URL = "https://scifact.s3.us-west-2.amazonaws.com/release/latest/data.tar.gz"
+
+
 def _cached_path(split: Literal["train", "validation", "test"]) -> Path:
-    """Return local path to the split file, downloading from HF if absent."""
+    """Return local path to the split file, downloading from S3 if absent."""
     filename = _SPLIT_FILES[split]
     local = _CACHE_DIR / filename
     if not local.exists():
-        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        print(f"Downloading SciFact {split} split from HuggingFace…", flush=True)
-        try:
-            import shutil
-            from huggingface_hub import hf_hub_download, list_repo_files  # type: ignore[import]
-            all_files = list(list_repo_files("allenai/scifact", repo_type="dataset"))
-            keywords = {"train": ["train"], "validation": ["dev", "validation"], "test": ["test"]}[split]
-            matches = [f for f in all_files if f.endswith(".jsonl") and any(k in f.lower() for k in keywords)]
-            if not matches:
-                raise FileNotFoundError(
-                    f"No JSONL for '{split}' in allenai/scifact. Repo contains: {all_files}"
-                )
-            src = hf_hub_download(repo_id="allenai/scifact", filename=matches[0], repo_type="dataset")
-            shutil.copy2(src, local)
-        except Exception as e:
-            raise RuntimeError(
-                f"Could not download SciFact {split} split. "
-                f"Place the file manually at: {local}"
-            ) from e
+        _download_all_splits()
+    if not local.exists():
+        raise RuntimeError(
+            f"SciFact {split} split missing after download attempt. "
+            f"Place the file manually at: {local}"
+        )
     return local
+
+
+def _download_all_splits() -> None:
+    """Download all SciFact splits from AllenAI S3 into _CACHE_DIR."""
+    import shutil
+    import tarfile
+    import tempfile
+    import urllib.request
+
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Downloading SciFact from {_SCIFACT_S3_URL}…", flush=True)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tar_path = Path(tmp) / "data.tar.gz"
+            urllib.request.urlretrieve(_SCIFACT_S3_URL, str(tar_path))
+            with tarfile.open(tar_path) as tar:
+                tar.extractall(tmp)
+            # The tar contains data/claims_train.jsonl, data/claims_dev.jsonl, etc.
+            data_dir = Path(tmp) / "data"
+            for dest_name in _SPLIT_FILES.values():
+                src = data_dir / dest_name
+                if src.exists():
+                    shutil.copy2(src, _CACHE_DIR / dest_name)
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not download SciFact from {_SCIFACT_S3_URL}. "
+            f"Place the files manually in: {_CACHE_DIR}"
+        ) from e
 
 
 def _iter_jsonl(path: Path):
