@@ -24,7 +24,6 @@ generate:
   n_examples: 10
   seed: 42
   out: generated.jsonl
-  failures: generated_fail.jsonl
 
 # Below can have multiple entries, one per model. Each entry can override the shared settings above.
 filter:

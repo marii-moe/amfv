@@ -321,13 +321,11 @@ def _cmd_generate(args: argparse.Namespace) -> None:
     if args.out is None:
         sys.exit("amfv-eval generate: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
-    _ensure_parent(args.failures)
 
     client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
     cache = GenerationCache(cache_dir=args.cache_dir)
 
-    all_pass: list[dict] = []
-    all_fail: list[dict] = []
+    all_examples: list[dict] = []
 
     for split in args.splits:
         split_key: Literal["train", "validation", "test"] = split  # type: ignore[assignment]
@@ -349,20 +347,11 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             seed=args.seed, target=target,
             concurrency=args.concurrency, debug=args.debug,
         )
-        raw_dicts = [ex.to_dict() for ex in examples]
-        print(f"[{split}] {len(raw_dicts)} passages generated. Validating…", flush=True)
-        split_pass, split_fail = _validate_dataset_examples(
-            raw_dicts, client=client, model=args.model, cache=cache
-        )
-        print(f"[{split}] {len(split_pass)}/{len(raw_dicts)} passed dataset validation.", flush=True)
-        all_pass.extend(split_pass)
-        all_fail.extend(split_fail)
+        all_examples.extend(ex.to_dict() for ex in examples)
+        print(f"[{split}] {len(examples)} passages generated.", flush=True)
 
-    _write_jsonl(all_pass, args.out)
-    print(f"Passed : {len(all_pass):,} → {args.out}")
-    if args.failures:
-        _write_jsonl(all_fail, args.failures)
-        print(f"Failed : {len(all_fail):,} → {args.failures}")
+    _write_jsonl(all_examples, args.out)
+    print(f"Generated: {len(all_examples):,} → {args.out}")
 
 
 def _cmd_filter(args: argparse.Namespace) -> None:
