@@ -188,6 +188,7 @@ def generate_example(
     )
 
     cached = cache.get(cache_key)
+    thinking_trace = ""
     if cached is None:
         user_msg = _build_user_message(claims, operator_names)
         try:
@@ -200,6 +201,13 @@ def generate_example(
                 max_tokens=16384,
             )
             content = response.choices[0].message.content or ""
+            # Capture thinking trace before extract_json strips it.
+            # vllm may expose it as reasoning_content or embed it as <think>…</think>.
+            thinking_trace = getattr(response.choices[0].message, "reasoning_content", None) or ""
+            if not thinking_trace:
+                m = __import__("re").search(r"<think>(.*?)</think>", content, __import__("re").DOTALL)
+                if m:
+                    thinking_trace = m.group(1).strip()
             if debug:
                 print(f"[generate] completion returned:\n{content}", flush=True)
             output = _LLMOutput.model_validate_json(extract_json(content))
@@ -224,6 +232,7 @@ def generate_example(
         gold_atoms=gold_atoms,
         context_sentences=list(cached.get("context_sentences", [])),
         source_claims=list(claims),
+        thinking_trace=thinking_trace,
     )
 
 

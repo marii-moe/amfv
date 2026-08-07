@@ -114,7 +114,7 @@ class EvalExample:
 
     def to_dict(self) -> dict:
         """Serialize to a JSON-serializable dict for JSONL output."""
-        return {
+        d: dict = {
             "id": self.id,
             "split": self.split,
             "passage": self.passage,
@@ -132,3 +132,6 @@ class EvalExample:
                 for c in self.source_claims
             ],
         }
+        if self.thinking_trace:
+            d["thinking_trace"] = self.thinking_trace
+        return d
