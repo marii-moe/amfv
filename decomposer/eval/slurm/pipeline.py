@@ -134,7 +134,7 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
         "output_dir": output_dir,
         "slurm_dir": str(slurm_dir),
         "hf_home": str(_BASE_DIR / ".cache"),
-        "vllm_image": str(_resolve(cfg["vllm_image"]) if "vllm_image" in cfg else cfg.get("vllm_bin", "docker://vllm/vllm-openai:latest")),
+        "vllm_image": os.environ.get("VLLM_IMAGE", "docker://vllm/vllm-openai:latest"),
         "time_limit": cfg.get("time_limit", None),
     }
 
