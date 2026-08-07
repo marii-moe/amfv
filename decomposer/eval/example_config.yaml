@@ -21,7 +21,7 @@ generate:
   model: Qwen/Qwen3.6-35B-A3B
   qos: normal
   splits: [train, validation]
-  n_examples: 500
+  n_examples: 10
   seed: 42
   out: generated.jsonl
   failures: generated_fail.jsonl
