@@ -50,6 +50,12 @@ if [ -f "${SHARD_MARKER}" ]; then
     exit 0
 fi
 
+if [ ! -f "${SHARD_FILE}" ]; then
+    echo "Shard ${TASK_ID} input not found, skipping."
+    touch "${SHARD_MARKER}"
+    exit 0
+fi
+
 mkdir -p "{{ out_dir }}"
 
 export HF_HOME="{{ hf_home }}"
