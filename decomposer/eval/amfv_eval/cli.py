@@ -306,7 +306,7 @@ def _validate_dataset_examples(
         }
         if not valid and stats:
             validation["thinking_chars"] = stats.get("thinking_chars", 0)
-            validation["response_chars"] = stats.get("response_chars", 0)
+            validation["judge_responses"] = stats.get("responses", [])
         record["dataset_validation"] = validation
         (passed if valid else failed).append(record)
         if _shutdown:

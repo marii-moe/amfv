@@ -242,7 +242,7 @@ def judge_operators(
         if stats is not None:
             thinking, rest = split_thinking(content)
             stats["thinking_chars"] = stats.get("thinking_chars", 0) + len(thinking)
-            stats["response_chars"] = stats.get("response_chars", 0) + len(rest)
+            stats.setdefault("responses", []).append(rest)
         applied = _OperatorOutput.model_validate_json(extract_json(content)).operators_applied
         for op in operators:
             applied.setdefault(op, False)
@@ -304,7 +304,7 @@ def judge_source_claims(
         if stats is not None:
             thinking, rest = split_thinking(content)
             stats["thinking_chars"] = stats.get("thinking_chars", 0) + len(thinking)
-            stats["response_chars"] = stats.get("response_chars", 0) + len(rest)
+            stats.setdefault("responses", []).append(rest)
         out = _SourceClaimOutput.model_validate_json(extract_json(content))
         in_passage = (out.in_passage + [False] * n)[:n]
         in_gold = (out.in_gold + [False] * n)[:n]
