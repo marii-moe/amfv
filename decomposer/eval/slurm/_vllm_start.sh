@@ -54,7 +54,7 @@ else
 fi
 VLLM_PID=$!
 
-trap 'echo "[vllm] Stopping vLLM (pid ${VLLM_PID})…"; kill "${VLLM_PID}" 2>/dev/null; wait "${VLLM_PID}" 2>/dev/null' EXIT
+trap 'echo "[vllm] Stopping vLLM (pid ${VLLM_PID})…"; kill "${VLLM_PID}" 2>/dev/null' EXIT
 
 export VLLM_BASE_URL="http://localhost:${_VLLM_PORT}/v1"
 _VLLM_HEALTH_URL="http://localhost:${_VLLM_PORT}/health"
