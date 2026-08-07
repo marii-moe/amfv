@@ -4,7 +4,19 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["extract_json"]
+__all__ = ["extract_json", "split_thinking"]
+
+
+def split_thinking(text: str) -> tuple[str, str]:
+    """Return ``(thinking, response)`` split from a raw completion.
+
+    Handles both ``<think>…</think>`` embedded blocks and vllm's
+    ``reasoning_content`` field (pass the field value directly as ``text``).
+    The response is the content with all think blocks stripped.
+    """
+    thinking_parts = re.findall(r"<think>(.*?)</think>", text, re.DOTALL)
+    response = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    return "\n".join(thinking_parts), response
 
 
 def extract_json(text: str) -> str:

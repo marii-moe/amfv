@@ -279,14 +279,15 @@ def _validate_dataset_examples(
     failed: list[dict] = []
     for ex in tqdm(examples, desc="validating dataset", unit="ex"):
         source_claims = [c["claim"] for c in ex.get("source_claims", [])]
+        stats: dict = {}
 
         source_coverage = judge_source_claims(
             source_claims, ex["passage"], ex["gold_atoms"],
-            client=client, model=model, cache=cache,
+            client=client, model=model, cache=cache, stats=stats,
         )
         operators_applied = judge_operators(
             ex["operators"], ex["passage"],
-            client=client, model=model, cache=cache,
+            client=client, model=model, cache=cache, stats=stats,
         )
 
         valid = (
@@ -296,13 +297,17 @@ def _validate_dataset_examples(
         )
 
         record = dict(ex)
-        record["dataset_validation"] = {
+        validation: dict = {
             "model": model,
             "source_in_passage": source_coverage["in_passage"],
             "source_in_gold": source_coverage["in_gold"],
             "operators_applied": operators_applied,
             "passed": valid,
         }
+        if not valid and stats:
+            validation["thinking_chars"] = stats.get("thinking_chars", 0)
+            validation["response_chars"] = stats.get("response_chars", 0)
+        record["dataset_validation"] = validation
         (passed if valid else failed).append(record)
         if _shutdown:
             break

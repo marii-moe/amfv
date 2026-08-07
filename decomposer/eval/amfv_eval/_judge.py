@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from amfv_eval._cache import GenerationCache
 from amfv_eval.operators import get_operator
-from amfv_eval._utils import extract_json
+from amfv_eval._utils import extract_json, split_thinking
 
 __all__ = [
     "judge_atoms",
@@ -203,6 +203,7 @@ def judge_operators(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
+    stats: dict | None = None,
 ) -> dict[str, bool]:
     """Judge whether a passage correctly applies each specified operator.
 
@@ -238,6 +239,10 @@ def judge_operators(
         if response.choices[0].finish_reason == "length":
             print("[WARNING] judge_operators: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
+        if stats is not None:
+            thinking, rest = split_thinking(content)
+            stats["thinking_chars"] = stats.get("thinking_chars", 0) + len(thinking)
+            stats["response_chars"] = stats.get("response_chars", 0) + len(rest)
         applied = _OperatorOutput.model_validate_json(extract_json(content)).operators_applied
         for op in operators:
             applied.setdefault(op, False)
@@ -256,6 +261,7 @@ def judge_source_claims(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
+    stats: dict | None = None,
 ) -> dict[str, list[bool]]:
     """Check that each source claim is represented in the passage and in the gold atoms.
 
@@ -295,6 +301,10 @@ def judge_source_claims(
         if response.choices[0].finish_reason == "length":
             print("[WARNING] judge_source_claims: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
+        if stats is not None:
+            thinking, rest = split_thinking(content)
+            stats["thinking_chars"] = stats.get("thinking_chars", 0) + len(thinking)
+            stats["response_chars"] = stats.get("response_chars", 0) + len(rest)
         out = _SourceClaimOutput.model_validate_json(extract_json(content))
         in_passage = (out.in_passage + [False] * n)[:n]
         in_gold = (out.in_gold + [False] * n)[:n]
