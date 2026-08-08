@@ -33,6 +33,8 @@ if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
     _ENROOT_CACHE="${ENROOT_CACHE:-${HOME}/.enroot/cache}"
     mkdir -p "${_ENROOT_CACHE}"
     export LABLESS_ENROOT_CACHE_PATH="${_ENROOT_CACHE}"
+    # Mount sources must exist before enroot will accept them
+    mkdir -p "${HF_HOME}" "${_VLLM_LOG_DIR}"
 
     echo "[vllm] Using container: ${_VLLM_ARG3}"
     srun --ntasks=1 \
