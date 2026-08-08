@@ -337,8 +337,9 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
             # Merge eval shards
             if is_done(merge_eval_marker):
                 print(f"merge eval[{i},{j}]: already done, skipping.")
+                merge_eval_job: str | None = None
             else:
-                sbatch(
+                merge_eval_job = sbatch(
                     slurm_dir / "merge.sbatch",
                     context={
                         **cpu_common,
@@ -348,6 +349,25 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
                         "marker": str(merge_eval_marker),
                     },
                     dependency=eval_job or after_eval_shard,
+                    dry_run=dry_run,
+                )
+
+            # Report
+            report_marker = markers_dir / f"report_{i}_{j}.done"
+            if is_done(report_marker):
+                print(f"report[{i},{j}]: already done, skipping.")
+            else:
+                metrics_out = eval_out.parent / (eval_out.stem + ".metrics.json")  # type: ignore[union-attr]
+                sbatch(
+                    slurm_dir / "report.sbatch",
+                    context={
+                        **cpu_common,
+                        "job_name": f"amfv-report-{i}-{j}",
+                        "input": str(eval_out),
+                        "out": str(metrics_out),
+                        "marker": str(report_marker),
+                    },
+                    dependency=merge_eval_job or eval_job or after_eval_shard,
                     dry_run=dry_run,
                 )
 

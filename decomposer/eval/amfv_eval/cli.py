@@ -486,6 +486,17 @@ def _cmd_merge(args: argparse.Namespace) -> None:
     print(f"Merged {len(shard_files)} shards → {len(all_records):,} records → {args.out}")
 
 
+def _cmd_report(args: argparse.Namespace) -> None:
+    records = _load_jsonl(args.input)
+    print(f"Loaded {len(records):,} records from {args.input}", flush=True)
+    metrics = compute_metrics(records)
+    print_report(metrics, title=f"Eval report — {args.input.name}")
+    if args.out:
+        _ensure_parent(args.out)
+        args.out.write_text(json.dumps(metrics, indent=2, ensure_ascii=False) + "\n")
+        print(f"Metrics written to {args.out}")
+
+
 # ---------------------------------------------------------------------------
 # Argument parsing
 # ---------------------------------------------------------------------------
@@ -571,6 +582,11 @@ def main(argv: list[str] | None = None) -> None:
     mg.add_argument("--in-dir", type=Path, required=True)
     mg.add_argument("--out", type=Path, required=True)
 
+    # report
+    rp = subs.add_parser("report", help="Compute and print metrics from a merged eval results JSONL.")
+    rp.add_argument("--input", "-i", type=Path, required=True, help="Merged eval results JSONL.")
+    rp.add_argument("--out", type=Path, default=None, help="Write metrics as JSON to this path.")
+
     # Apply YAML defaults to the relevant subparser before the full parse.
     subparser_map = {
         "generate": gen, "filter": filt, "decompose": dec,
@@ -591,6 +607,7 @@ def main(argv: list[str] | None = None) -> None:
         "eval": _cmd_eval,
         "shard": _cmd_shard,
         "merge": _cmd_merge,
+        "report": _cmd_report,
     }[args.command](args)
 
 
