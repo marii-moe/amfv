@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import re
-
 import openai
 from pydantic import BaseModel, Field
 
 from amfv_eval._cache import GenerationCache
-from amfv_eval._utils import extract_json
+from amfv_eval._utils import extract_json, split_thinking
 
 __all__ = ["decompose"]
 
@@ -87,15 +85,9 @@ def decompose(
 
 
 def _extract_thinking(response: openai.types.chat.ChatCompletion, raw: str) -> str:
-    """Extract thinking trace from a vLLM response.
-
-    Handles two formats:
-    - ``reasoning_content`` field (newer vLLM with thinking-capable models)
-    - ``<think>...</think>`` tags embedded in the content
-    """
     msg = response.choices[0].message
-    rc = getattr(msg, "reasoning", None)
+    rc = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
     if rc:
         return rc
-    m = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
-    return m.group(1).strip() if m else ""
+    thinking, _ = split_thinking(raw)
+    return thinking

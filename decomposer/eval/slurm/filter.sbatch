@@ -34,8 +34,8 @@
 #SBATCH --account={{ account }}
 {% endif %}
 #SBATCH --export=ALL
-#SBATCH --output="{{ output_dir }}/slurm/job_%j.log"
-#SBATCH --error="{{ output_dir }}/slurm/job_%j.log"
+#SBATCH --output="{{ output_dir }}/slurm/job_filter_%j.log"
+#SBATCH --error="{{ output_dir }}/slurm/job_filter_%j.log"
 
 set -euo pipefail
 mkdir -p "{{ output_dir }}/slurm"
