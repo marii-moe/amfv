@@ -161,26 +161,22 @@ def judge_atoms(
     Returns:
         One bool per gold atom; ``True`` means covered.
     """
-    cache_key = cache.key(
-        "judge_atoms", model,
-        json.dumps(gold_atoms),
-        json.dumps(extracted_atoms),
-    )
+    gold_text = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(gold_atoms))
+    extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
+    user_msg = f"Gold atoms:\n{gold_text}\n\nExtracted atoms:\n{extr_text}"
+    messages = [
+        {"role": "system", "content": _ATOM_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
     cached = cache.get(cache_key)
     if cached is not None:
         return cached["atom_covered"]
 
-    gold_text = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(gold_atoms))
-    extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
-    user_msg = f"Gold atoms:\n{gold_text}\n\nExtracted atoms:\n{extr_text}"
-
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _ATOM_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length" and not response.choices[0].message.content:
@@ -217,23 +213,23 @@ def judge_operators(
     Returns:
         Mapping from operator name to applied boolean.
     """
-    cache_key = cache.key("judge_operators", model, json.dumps(operators), passage)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached["operators_applied"]
-
     op_desc = "\n".join(
         f"- {name}: {get_operator(name).description}" for name in operators
     )
     user_msg = f"Operators:\n{op_desc}\n\nPassage:\n{passage}"
+    messages = [
+        {"role": "system", "content": _OPERATOR_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached["operators_applied"]
 
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _OPERATOR_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
@@ -270,16 +266,6 @@ def judge_source_claims(
     Returns:
         Dict with ``"in_passage"`` and ``"in_gold"`` lists, one bool per source claim.
     """
-    cache_key = cache.key(
-        "judge_source_claims", model,
-        json.dumps(source_claims),
-        passage,
-        json.dumps(gold_atoms),
-    )
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return {"in_passage": cached["in_passage"], "in_gold": cached["in_gold"]}
-
     n = len(source_claims)
     claims_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(source_claims))
     gold_text = "\n".join(f"- {a}" for a in gold_atoms) if gold_atoms else "(none)"
@@ -288,14 +274,19 @@ def judge_source_claims(
         f"Passage:\n{passage}\n\n"
         f"Gold atoms:\n{gold_text}"
     )
+    messages = [
+        {"role": "system", "content": _SOURCE_CLAIM_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return {"in_passage": cached["in_passage"], "in_gold": cached["in_gold"]}
 
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _SOURCE_CLAIM_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
@@ -332,11 +323,6 @@ def judge_operator_awareness(
     Returns:
         Mapping from operator name to noticed boolean.
     """
-    cache_key = cache.key("judge_operator_awareness", model, json.dumps(operators), thinking_trace)
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached["operators_noticed"]
-
     op_desc = "\n".join(
         f"- {name}: {get_operator(name).description}" for name in operators
     )
@@ -344,14 +330,19 @@ def judge_operator_awareness(
         f"Operators:\n{op_desc}\n\n"
         f"Reasoning trace:\n{thinking_trace or '(no trace available)'}"
     )
+    messages = [
+        {"role": "system", "content": _OPERATOR_AWARENESS_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached["operators_noticed"]
 
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _OPERATOR_AWARENESS_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
         if response.choices[0].finish_reason == "length":
@@ -390,26 +381,22 @@ def judge_context_extraction(
     if not context_sentences:
         return []
 
-    cache_key = cache.key(
-        "judge_context", model,
-        json.dumps(context_sentences),
-        json.dumps(extracted_atoms),
-    )
+    ctx_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(context_sentences))
+    extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
+    user_msg = f"Context sentences:\n{ctx_text}\n\nExtracted atoms:\n{extr_text}"
+    messages = [
+        {"role": "system", "content": _CONTEXT_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
     cached = cache.get(cache_key)
     if cached is not None:
         return cached["context_extracted"]
 
-    ctx_text = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(context_sentences))
-    extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
-    user_msg = f"Context sentences:\n{ctx_text}\n\nExtracted atoms:\n{extr_text}"
-
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _CONTEXT_SYSTEM},
-                {"role": "user", "content": user_msg},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
         content = response.choices[0].message.content or ""

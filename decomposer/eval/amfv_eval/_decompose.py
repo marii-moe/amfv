@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import openai
 from pydantic import BaseModel, Field
 
@@ -55,20 +57,21 @@ def decompose(
         Tuple of ``(extracted_atoms, thinking_trace)``.  Returns ``([], "")``
         on failure.
     """
-    cache_key = cache.key("decompose", model, passage, str(enable_thinking))
+    extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
+    max_tokens = 8192 if enable_thinking else 1024
+    messages = [
+        {"role": "system", "content": _SYSTEM},
+        {"role": "user", "content": f"Passage: {passage}"},
+    ]
+    cache_key = cache.key(model, json.dumps(messages), str(enable_thinking))
     cached = cache.get(cache_key)
     if cached is not None:
         return cached["atoms"], cached.get("thinking_trace", "")
 
-    extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
-    max_tokens = 8192 if enable_thinking else 1024
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": f"Passage: {passage}"},
-            ],
+            messages=messages,  # type: ignore[arg-type]
             max_tokens=max_tokens,
             extra_body=extra,
         )

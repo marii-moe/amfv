@@ -181,23 +181,20 @@ def generate_example(
         A fully populated :class:`EvalExample`, or ``None`` if generation
         fails (e.g. the model returns invalid JSON).
     """
-    cache_key = cache.key(
-        model,
-        json.dumps([c.id for c in claims], sort_keys=True),
-        json.dumps(operator_names),
-    )
+    user_msg = _build_user_message(claims, operator_names)
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
 
     cached = cache.get(cache_key)
     thinking_trace = ""
     if cached is None:
-        user_msg = _build_user_message(claims, operator_names)
         try:
             response = client.chat.completions.create(
                 model=model,
-                messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
+                messages=messages,
                 max_tokens=16384,
             )
             content = response.choices[0].message.content or ""
