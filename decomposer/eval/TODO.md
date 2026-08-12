@@ -58,7 +58,7 @@ flakiness silently edits the dataset.
 - [ ] Persist an `error` field with exception type and `finish_reason`.
 - [x] Exclude errored records from metrics; do not zero-fill. Report
       `n_errored` / `error_rate` at the top of the report.
-- [ ] Narrow `except Exception` to `openai.APIError`, `json.JSONDecodeError`, and
+- [x] Narrow `except Exception` to `openai.APIError`, `json.JSONDecodeError`, and
       `pydantic.ValidationError`. A typo in a judge currently presents as "this
       model scores badly".
 - [ ] Set `max_retries` on the client — currently running the SDK default.

@@ -6,7 +6,7 @@ import json
 import sys
 
 import openai
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from amfv_eval._cache import GenerationCache
 from amfv_eval.operators import get_operator
@@ -185,7 +185,7 @@ def judge_atoms(
         covered = _AtomOutput.model_validate_json(extract_json(content)).atom_covered
         # Align to gold length in case the model under/over-counts
         covered = (covered + [False] * len(required_atoms))[: len(required_atoms)]
-    except Exception:
+    except (openai.APIError, json.JSONDecodeError, ValidationError):
         return None
 
     cache.set(cache_key, {"atom_covered": covered})
@@ -242,7 +242,7 @@ def judge_operators(
         applied = _OperatorOutput.model_validate_json(extract_json(content)).operators_applied
         for op in operators:
             applied.setdefault(op, False)
-    except Exception:
+    except (openai.APIError, json.JSONDecodeError, ValidationError):
         return None
 
     cache.set(cache_key, {"operators_applied": applied})
@@ -299,7 +299,7 @@ def judge_source_claims(
         out = _SourceClaimOutput.model_validate_json(extract_json(content))
         in_passage = (out.in_passage + [False] * n)[:n]
         in_gold = (out.in_gold + [False] * n)[:n]
-    except Exception:
+    except (openai.APIError, json.JSONDecodeError, ValidationError):
         return None
 
     result = {"in_passage": in_passage, "in_gold": in_gold}
@@ -350,7 +350,7 @@ def judge_operator_awareness(
         noticed = _OperatorAwarenessOutput.model_validate_json(extract_json(content)).operators_noticed
         for op in operators:
             noticed.setdefault(op, False)
-    except Exception:
+    except (openai.APIError, json.JSONDecodeError, ValidationError):
         return None
 
     cache.set(cache_key, {"operators_noticed": noticed})
@@ -401,7 +401,7 @@ def judge_context_extraction(
         content = response.choices[0].message.content or ""
         extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted
         extracted = (extracted + [False] * len(context_sentences))[: len(context_sentences)]
-    except Exception:
+    except (openai.APIError, json.JSONDecodeError, ValidationError):
         return None
 
     cache.set(cache_key, {"context_extracted": extracted})
