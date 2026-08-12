@@ -87,7 +87,7 @@ def _load_yaml_defaults(config_path: Path, command: str, step: int | None) -> di
 
     # Shared top-level settings
     defaults: dict = {}
-    for key in ("base_url", "cache_dir", "debug"):
+    for key in ("base_url", "cache_dir", "debug", "max_retries"):
         if key in cfg:
             val = cfg[key]
             if key == "cache_dir" and val is not None:
@@ -375,7 +375,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
         sys.exit("amfv-eval generate: error: --out is required (or set via --config)")
     _ensure_parent(args.out)
 
-    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY", max_retries=args.max_retries)
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     all_examples: list[dict] = []
@@ -420,7 +420,7 @@ def _cmd_filter(args: argparse.Namespace) -> None:
     examples = _load_jsonl(args.input)
     print(f"Loaded {len(examples):,} examples from {args.input}", flush=True)
 
-    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY", max_retries=args.max_retries)
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Validating dataset with {args.model}…", flush=True)
@@ -453,7 +453,7 @@ def _cmd_decompose(args: argparse.Namespace) -> None:
         print(f"Resuming: {len(completed):,} already done, {len(examples) - len(completed):,} remaining.", flush=True)
     to_process = [ex for ex in examples if ex.get("id") not in completed]
 
-    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY", max_retries=args.max_retries)
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Decomposing with {args.model}…", flush=True)
@@ -487,7 +487,7 @@ def _cmd_eval(args: argparse.Namespace) -> None:
         print(f"Resuming: {len(completed):,} already done, {len(examples) - len(completed):,} remaining.", flush=True)
     to_process = [ex for ex in examples if ex.get("id") not in completed]
 
-    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY")
+    client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY", max_retries=args.max_retries)
     cache = GenerationCache(cache_dir=args.cache_dir)
 
     print(f"Judging with {args.model}…", flush=True)
@@ -562,6 +562,7 @@ def _add_common_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--out", type=Path, default=None, help="Output JSONL for passing examples.")
     p.add_argument("--failures", type=Path, default=None, help="Output JSONL for failing examples (optional).")
     p.add_argument("--debug", action="store_true", default=False, help="Print each chat completion response.")
+    p.add_argument("--max-retries", type=int, default=2, help="OpenAI client retry limit on transient errors (default: 2).")
 
 
 def _add_input_arg(p: argparse.ArgumentParser) -> None:

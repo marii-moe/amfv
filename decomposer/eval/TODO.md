@@ -61,7 +61,7 @@ flakiness silently edits the dataset.
 - [x] Narrow `except Exception` to `openai.APIError`, `json.JSONDecodeError`, and
       `pydantic.ValidationError`. A typo in a judge currently presents as "this
       model scores badly".
-- [ ] Set `max_retries` on the client — currently running the SDK default.
+- [x] Set `max_retries` on the client — currently running the SDK default.
 - [ ] Purge the existing cache. Entries are indistinguishable from real results.
 - [ ] Purge or re-run any `decomposed_*.jsonl` / `results_*.jsonl` records with
       empty `extracted_atoms`. `_cmd_decompose` resumes off `_load_completed_ids`,

@@ -7,6 +7,7 @@
 # Shared settings
 base_url: http://localhost:8000/v1
 cache_dir: cache/amfv_eval
+max_retries: 5  # OpenAI client retries on transient errors (SDK default: 2)
 partition: n       # GPU nodes
 cpu_partition: c   # CPU-only nodes (shard/merge jobs)
 account: training
