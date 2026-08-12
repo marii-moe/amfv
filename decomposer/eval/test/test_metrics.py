@@ -19,7 +19,7 @@ def _record(
         "split": "train",
         "n_operators": len(operators),
         "operators": operators,
-        "gold_atoms": [f"atom {i}" for i in range(len(atom_covered))],
+        "required_atoms": [f"atom {i}" for i in range(len(atom_covered))],
         "evaluations": [
             {
                 "model": "test-model",

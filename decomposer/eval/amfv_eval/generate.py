@@ -65,7 +65,7 @@ one additional relational atom capturing the new logical link introduced.
    - Do NOT include the context sentences — they are not verifiable claims.
 
 3. Return SEED_ATOMS — the paraphrased seed claims as they appear in the passage \
-(subset of gold_atoms, listed in the same order as the input seeds).
+(subset of required_atoms, listed in the same order as the input seeds).
 
 4. Return CONTEXT_SENTENCES — copy the context sentences verbatim as they appear in \
 the passage.  A correct decomposer must NOT extract these as atomic claims.
@@ -217,14 +217,14 @@ def generate_example(
         }
         cache.set(cache_key, cached)
 
-    gold_atoms: list[str] = list(cached["seed_atoms"]) + list(cached.get("relational_atoms", []))
+    required_atoms: list[str] = list(cached["seed_atoms"]) + list(cached.get("relational_atoms", []))
 
     return EvalExample(
         id=f"{split}_{example_index:05d}",
         split=split,
         passage=cached["passage"],
         operators=operator_names,
-        gold_atoms=gold_atoms,
+        required_atoms=required_atoms,
         context_sentences=list(cached.get("context_sentences", [])),
         source_claims=list(claims),
         thinking_trace=thinking_trace,

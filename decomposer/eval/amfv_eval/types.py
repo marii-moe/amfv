@@ -89,7 +89,7 @@ class EvalExample:
         split: Dataset split.
         passage: The fused passage embedding all source claims.
         operators: Operator names applied to produce the passage, in order.
-        gold_atoms: Complete list of atomic claims a perfect decomposer must
+        required_atoms: Complete list of atomic claims a perfect decomposer must
             extract.  Includes contextualized seed atoms plus any relational
             atoms added by RELATION operators.
         source_claims: The SciFact claims used as seeds.
@@ -103,7 +103,7 @@ class EvalExample:
     split: Literal["train", "validation", "test"]
     passage: str
     operators: list[str]
-    gold_atoms: list[str]
+    required_atoms: list[str]
     source_claims: list[ScifactClaim]
     n_operators: int = field(init=False)
     thinking_trace: str = ""
@@ -120,7 +120,7 @@ class EvalExample:
             "passage": self.passage,
             "operators": self.operators,
             "n_operators": self.n_operators,
-            "gold_atoms": self.gold_atoms,
+            "required_atoms": self.required_atoms,
             "context_sentences": self.context_sentences,
             "source_claims": [
                 {

@@ -142,7 +142,7 @@ class _ContextOutput(BaseModel):
 
 
 def judge_atoms(
-    gold_atoms: list[str],
+    required_atoms: list[str],
     extracted_atoms: list[str],
     *,
     client: openai.OpenAI,
@@ -152,7 +152,7 @@ def judge_atoms(
     """Judge which gold atoms are semantically covered by extracted atoms.
 
     Args:
-        gold_atoms: Reference atoms from the eval example.
+        required_atoms: Reference atoms from the eval example.
         extracted_atoms: Atoms produced by the decomposer model.
         client: OpenAI-compatible client.
         model: Judge model name.
@@ -161,7 +161,7 @@ def judge_atoms(
     Returns:
         One bool per gold atom; ``True`` means covered.
     """
-    gold_text = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(gold_atoms))
+    gold_text = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(required_atoms))
     extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
     user_msg = f"Gold atoms:\n{gold_text}\n\nExtracted atoms:\n{extr_text}"
     messages = [
@@ -184,7 +184,7 @@ def judge_atoms(
         content = response.choices[0].message.content or ""
         covered = _AtomOutput.model_validate_json(extract_json(content)).atom_covered
         # Align to gold length in case the model under/over-counts
-        covered = (covered + [False] * len(gold_atoms))[: len(gold_atoms)]
+        covered = (covered + [False] * len(required_atoms))[: len(required_atoms)]
     except Exception:
         return None
 
@@ -252,7 +252,7 @@ def judge_operators(
 def judge_source_claims(
     source_claims: list[str],
     passage: str,
-    gold_atoms: list[str],
+    required_atoms: list[str],
     *,
     client: openai.OpenAI,
     model: str,
@@ -268,7 +268,7 @@ def judge_source_claims(
     """
     n = len(source_claims)
     claims_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(source_claims))
-    gold_text = "\n".join(f"- {a}" for a in gold_atoms) if gold_atoms else "(none)"
+    gold_text = "\n".join(f"- {a}" for a in required_atoms) if required_atoms else "(none)"
     user_msg = (
         f"Seed claims:\n{claims_text}\n\n"
         f"Passage:\n{passage}\n\n"

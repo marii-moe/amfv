@@ -214,7 +214,7 @@ def _judge_examples(
         judge_errors: list[str] = []
 
         atom_covered = judge_atoms(
-            ex["gold_atoms"], atoms, client=client, model=model, cache=cache
+            ex["required_atoms"], atoms, client=client, model=model, cache=cache
         )
         if atom_covered is None:
             judge_errors.append("judge_atoms")
@@ -306,7 +306,7 @@ def _validate_dataset_examples(
         stats: dict = {}
 
         source_coverage = judge_source_claims(
-            source_claims, ex["passage"], ex["gold_atoms"],
+            source_claims, ex["passage"], ex["required_atoms"],
             client=client, model=model, cache=cache, stats=stats,
         )
         operators_applied = judge_operators(
