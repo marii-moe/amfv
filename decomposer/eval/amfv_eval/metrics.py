@@ -28,13 +28,14 @@ def compute_metrics(records: list[dict]) -> dict:
 
     total = len(records)
     n_passed = sum(1 for r in records if r.get("passed", False))
+    n_errors = 0
 
     atom_recalls: list[float] = []
     ctx_precisions: list[float] = []
     eval_scores: list[float] = []
     reward_scores: list[float] = []
     op_noticed: dict[str, list[bool]] = defaultdict(list)
-    by_n_op: dict[int, dict] = defaultdict(lambda: {"total": 0, "passed": 0})
+    by_n_op: dict[int, dict] = defaultdict(lambda: {"total": 0, "passed": 0, "errors": 0})
 
     for r in records:
         evals = r.get("evaluations", [])
@@ -43,11 +44,14 @@ def compute_metrics(records: list[dict]) -> dict:
             continue
         ev = evals[-1]
 
-        atom_covered: list[bool] = ev.get("atom_covered", [])
+        if ev.get("judge_errors"):
+            n_errors += 1
+
+        atom_covered: list[bool] | None = ev.get("atom_covered")
         if atom_covered:
             atom_recalls.append(sum(atom_covered) / len(atom_covered))
 
-        ctx_extracted: list[bool] = ev.get("context_extracted", [])
+        ctx_extracted: list[bool] | None = ev.get("context_extracted")
         if ctx_extracted:
             ctx_precisions.append(1.0 - sum(ctx_extracted) / len(ctx_extracted))
 
@@ -62,10 +66,12 @@ def compute_metrics(records: list[dict]) -> dict:
         n_ops = r.get("n_operators", 0)
         by_n_op[n_ops]["total"] += 1
         by_n_op[n_ops]["passed"] += int(r.get("passed", False))
+        by_n_op[n_ops]["errors"] += int(bool(ev.get("judge_errors")))
 
     return {
         "total": total,
         "passed": n_passed,
+        "errors": n_errors,
         "pass_rate": n_passed / total if total else 0.0,
         "atom_recall": _mean(atom_recalls),
         "context_precision": _mean(ctx_precisions) if ctx_precisions else None,
@@ -79,6 +85,7 @@ def compute_metrics(records: list[dict]) -> dict:
             n: {
                 "total": d["total"],
                 "passed": d["passed"],
+                "errors": d["errors"],
                 "pass_rate": d["passed"] / d["total"] if d["total"] else 0.0,
             }
             for n, d in sorted(by_n_op.items())
@@ -104,7 +111,10 @@ def print_report(metrics: dict, *, title: str = "Results") -> None:
 
     total = metrics["total"]
     passed = metrics["passed"]
+    errors = metrics.get("errors", 0)
     print(f"\n  Pass rate        {passed:,} / {total:,}  ({metrics['pass_rate']:.1%})")
+    if errors:
+        print(f"  Judge errors     {errors:,} / {total:,}  ({errors / total:.1%})")
     print(f"  Atom recall      {metrics['atom_recall']:.3f}")
     ctx_prec = metrics.get("context_precision")
     if ctx_prec is not None:
@@ -129,7 +139,8 @@ def print_report(metrics: dict, *, title: str = "Results") -> None:
         for n, d in by_n.items():
             label = f"  {n} op{'s' if n != 1 else ' '}"
             bar = f"{d['passed']:,} / {d['total']:,}  ({d['pass_rate']:.1%})"
-            print(f"    {label:<8}  {bar}")
+            err_note = f"  [{d['errors']} errors]" if d.get("errors") else ""
+            print(f"    {label:<8}  {bar}{err_note}")
 
     print()
 

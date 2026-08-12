@@ -148,7 +148,7 @@ def judge_atoms(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> list[bool]:
+) -> list[bool] | None:
     """Judge which gold atoms are semantically covered by extracted atoms.
 
     Args:
@@ -186,7 +186,7 @@ def judge_atoms(
         # Align to gold length in case the model under/over-counts
         covered = (covered + [False] * len(gold_atoms))[: len(gold_atoms)]
     except Exception:
-        covered = [False] * len(gold_atoms)
+        return None
 
     cache.set(cache_key, {"atom_covered": covered})
     return covered
@@ -200,7 +200,7 @@ def judge_operators(
     model: str,
     cache: GenerationCache,
     stats: dict | None = None,
-) -> dict[str, bool]:
+) -> dict[str, bool] | None:
     """Judge whether a passage correctly applies each specified operator.
 
     Args:
@@ -243,7 +243,7 @@ def judge_operators(
         for op in operators:
             applied.setdefault(op, False)
     except Exception:
-        applied = {op: False for op in operators}
+        return None
 
     cache.set(cache_key, {"operators_applied": applied})
     return applied
@@ -258,7 +258,7 @@ def judge_source_claims(
     model: str,
     cache: GenerationCache,
     stats: dict | None = None,
-) -> dict[str, list[bool]]:
+) -> dict[str, list[bool]] | None:
     """Check that each source claim is represented in the passage and in the gold atoms.
 
     Used during dataset creation to verify example quality.
@@ -300,8 +300,7 @@ def judge_source_claims(
         in_passage = (out.in_passage + [False] * n)[:n]
         in_gold = (out.in_gold + [False] * n)[:n]
     except Exception:
-        in_passage = [False] * n
-        in_gold = [False] * n
+        return None
 
     result = {"in_passage": in_passage, "in_gold": in_gold}
     cache.set(cache_key, result)
@@ -315,7 +314,7 @@ def judge_operator_awareness(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> dict[str, bool]:
+) -> dict[str, bool] | None:
     """Score whether a thinking trace mentions each operator relationship.
 
     Used during downstream model evaluation — not a hard pass/fail criterion.
@@ -352,7 +351,7 @@ def judge_operator_awareness(
         for op in operators:
             noticed.setdefault(op, False)
     except Exception:
-        noticed = {op: False for op in operators}
+        return None
 
     cache.set(cache_key, {"operators_noticed": noticed})
     return noticed
@@ -365,7 +364,7 @@ def judge_context_extraction(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> list[bool]:
+) -> list[bool] | None:
     """Judge whether context sentences were incorrectly extracted as atomic claims.
 
     Args:
@@ -403,7 +402,7 @@ def judge_context_extraction(
         extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted
         extracted = (extracted + [False] * len(context_sentences))[: len(context_sentences)]
     except Exception:
-        extracted = [False] * len(context_sentences)
+        return None
 
     cache.set(cache_key, {"context_extracted": extracted})
     return extracted

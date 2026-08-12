@@ -211,43 +211,67 @@ def _judge_examples(
         atoms: list[str] = latest["extracted_atoms"]
         trace: str = latest["thinking_trace"]
 
+        judge_errors: list[str] = []
+
         atom_covered = judge_atoms(
             ex["gold_atoms"], atoms, client=client, model=model, cache=cache
         )
+        if atom_covered is None:
+            judge_errors.append("judge_atoms")
+
         context_extracted = judge_context_extraction(
             ex.get("context_sentences", []), atoms, client=client, model=model, cache=cache
         )
+        if context_extracted is None:
+            judge_errors.append("judge_context_extraction")
+
         operators_noticed = judge_operator_awareness(
             ex["operators"], trace, client=client, model=model, cache=cache
         )
+        if operators_noticed is None:
+            judge_errors.append("judge_operator_awareness")
 
-        passed = all(atom_covered) and not any(context_extracted)
-
-        n_gold = len(atom_covered)
-        recall = sum(atom_covered) / n_gold if n_gold else 1.0
-        n_ctx = len(context_extracted)
-        ctx_precision = 1.0 - (sum(context_extracted) / n_ctx) if n_ctx else 1.0
-        op_awareness = (
-            sum(operators_noticed.values()) / len(operators_noticed)
-            if operators_noticed else 1.0
+        passed = (
+            not judge_errors
+            and bool(atom_covered) and all(atom_covered)
+            and not any(context_extracted or [])
         )
 
-        eval_score = 0.6 * recall + 0.4 * ctx_precision
-        reward_score = 0.5 * recall + 0.3 * ctx_precision + 0.2 * op_awareness
+        n_gold = len(atom_covered) if atom_covered is not None else 0
+        recall = sum(atom_covered) / n_gold if n_gold else (1.0 if atom_covered is not None else None)
+        n_ctx = len(context_extracted) if context_extracted is not None else 0
+        ctx_precision = (1.0 - sum(context_extracted) / n_ctx) if n_ctx else (1.0 if context_extracted is not None else None)
+        op_awareness = (
+            sum(operators_noticed.values()) / len(operators_noticed)
+            if operators_noticed else (1.0 if operators_noticed is not None else None)
+        )
 
-        evaluation = {
+        eval_score = (0.6 * recall + 0.4 * ctx_precision) if recall is not None and ctx_precision is not None else None
+        reward_score = (
+            0.5 * recall + 0.3 * ctx_precision + 0.2 * op_awareness
+            if recall is not None and ctx_precision is not None and op_awareness is not None
+            else None
+        )
+
+        evaluation: dict = {
             "decomposition_model": latest["model"],
             "judge_model": model,
-            "atom_covered": atom_covered,
-            "context_extracted": context_extracted,
-            "operators_noticed": operators_noticed,
-            "atom_recall": recall,
-            "context_precision": ctx_precision,
-            "operator_awareness_score": op_awareness,
-            "eval_score": eval_score,
-            "reward_score": reward_score,
             "passed": passed,
+            "judge_errors": judge_errors,
         }
+        if atom_covered is not None:
+            evaluation["atom_covered"] = atom_covered
+            evaluation["atom_recall"] = recall
+        if context_extracted is not None:
+            evaluation["context_extracted"] = context_extracted
+            evaluation["context_precision"] = ctx_precision
+        if operators_noticed is not None:
+            evaluation["operators_noticed"] = operators_noticed
+            evaluation["operator_awareness_score"] = op_awareness
+        if eval_score is not None:
+            evaluation["eval_score"] = eval_score
+        if reward_score is not None:
+            evaluation["reward_score"] = reward_score
 
         record = dict(ex)
         record.setdefault("evaluations", [])
@@ -290,8 +314,15 @@ def _validate_dataset_examples(
             client=client, model=model, cache=cache, stats=stats,
         )
 
+        judge_errors: list[str] = []
+        if source_coverage is None:
+            judge_errors.append("judge_source_claims")
+        if operators_applied is None:
+            judge_errors.append("judge_operators")
+
         valid = (
-            all(source_coverage["in_passage"])
+            not judge_errors
+            and all(source_coverage["in_passage"])
             and all(source_coverage["in_gold"])
             and all(operators_applied.values())
         )
@@ -299,11 +330,14 @@ def _validate_dataset_examples(
         record = dict(ex)
         validation: dict = {
             "model": model,
-            "source_in_passage": source_coverage["in_passage"],
-            "source_in_gold": source_coverage["in_gold"],
-            "operators_applied": operators_applied,
             "passed": valid,
+            "judge_errors": judge_errors,
         }
+        if source_coverage is not None:
+            validation["source_in_passage"] = source_coverage["in_passage"]
+            validation["source_in_gold"] = source_coverage["in_gold"]
+        if operators_applied is not None:
+            validation["operators_applied"] = operators_applied
         if not valid and stats:
             validation["thinking_chars"] = stats.get("thinking_chars", 0)
             validation["judge_responses"] = stats.get("responses", [])
