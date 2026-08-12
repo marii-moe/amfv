@@ -28,7 +28,7 @@ from tqdm import tqdm
 from pydantic import BaseModel, Field
 
 from amfv_eval._cache import GenerationCache
-from amfv_eval._utils import extract_json
+from amfv_eval._utils import extract_json, split_thinking
 from amfv_eval.operators import NON_RELATION_OPERATORS, OPERATORS, RELATION_OPERATORS
 from amfv_eval.types import ClaimGroup, EvalExample, ScifactClaim
 
@@ -202,9 +202,7 @@ def generate_example(
             # vllm may expose it as reasoning_content or embed it as <think>…</think>.
             thinking_trace = getattr(response.choices[0].message, "reasoning_content", None) or ""
             if not thinking_trace:
-                m = __import__("re").search(r"<think>(.*?)</think>", content, __import__("re").DOTALL)
-                if m:
-                    thinking_trace = m.group(1).strip()
+                thinking_trace, _ = split_thinking(content)
             if debug:
                 print(f"[generate] completion returned:\n{content}", flush=True)
             output = _LLMOutput.model_validate_json(extract_json(content))
