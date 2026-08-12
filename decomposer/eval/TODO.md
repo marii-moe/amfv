@@ -54,9 +54,9 @@ The same pattern reaches the dataset: `_validate_dataset_examples` treats a judg
 error as `valid=False` and routes the example to the failures file, so judge
 flakiness silently edits the dataset.
 
-- [ ] Never cache a failure. Raise or return a sentinel; let the next run retry.
+- [x] Never cache a failure. Raise or return a sentinel; let the next run retry.
 - [ ] Persist an `error` field with exception type and `finish_reason`.
-- [ ] Exclude errored records from metrics; do not zero-fill. Report
+- [x] Exclude errored records from metrics; do not zero-fill. Report
       `n_errored` / `error_rate` at the top of the report.
 - [ ] Narrow `except Exception` to `openai.APIError`, `json.JSONDecodeError`, and
       `pydantic.ValidationError`. A typo in a judge currently presents as "this
