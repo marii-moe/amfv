@@ -36,19 +36,11 @@ if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
     # Mount sources must exist before enroot will accept them
     mkdir -p "${HF_HOME}" "${_VLLM_LOG_DIR}"
 
-    # Compilation caches must be on shared storage so compiled kernels persist
-    # across container instances and nodes (defaults write inside the container
-    # overlay and disappear when the job ends).
-    _CACHE_BASE="${HF_HOME%/*}/vllm_compile_cache"
-    export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-${_CACHE_BASE}/triton}"
-    export VLLM_CACHE_ROOT="${VLLM_CACHE_ROOT:-${_CACHE_BASE}/vllm}"
-    mkdir -p "${TRITON_CACHE_DIR}" "${VLLM_CACHE_ROOT}"
-
     echo "[vllm] Using container: ${_VLLM_ARG3}"
     srun --ntasks=1 \
          --container-image="${_VLLM_ARG3}" \
-         --container-mounts="${HF_HOME}:${HF_HOME},${_VLLM_LOG_DIR}:${_VLLM_LOG_DIR},/dev/shm:/dev/shm,${TRITON_CACHE_DIR}:${TRITON_CACHE_DIR},${VLLM_CACHE_ROOT}:${VLLM_CACHE_ROOT}" \
-         --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN,TRITON_CACHE_DIR,VLLM_CACHE_ROOT" \
+         --container-mounts="${HF_HOME}:${HF_HOME},${_VLLM_LOG_DIR}:${_VLLM_LOG_DIR},/dev/shm:/dev/shm" \
+         --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN" \
          bash -c "vllm serve '${_VLLM_MODEL}' \
              --tensor-parallel-size '${_VLLM_TP}' \
              --port '${_VLLM_PORT}' \
