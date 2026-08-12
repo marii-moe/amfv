@@ -44,6 +44,7 @@ if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
          bash -c "vllm serve '${_VLLM_MODEL}' \
              --tensor-parallel-size '${_VLLM_TP}' \
              --port '${_VLLM_PORT}' \
+             --enforce-eager \
              >> '${_VLLM_LOG}' 2>&1" \
          &
 else
