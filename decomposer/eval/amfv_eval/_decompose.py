@@ -5,12 +5,21 @@ from __future__ import annotations
 import json
 
 import openai
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from amfv_eval._cache import GenerationCache
 from amfv_eval._utils import extract_json, split_thinking
 
-__all__ = ["decompose"]
+__all__ = ["DecomposeError", "decompose"]
+
+
+class DecomposeError(Exception):
+    """Raised by decompose() when the API call or response parsing fails."""
+
+    def __init__(self, exception_type: str, finish_reason: str | None = None) -> None:
+        self.exception_type = exception_type
+        self.finish_reason = finish_reason
+        super().__init__(f"{exception_type} (finish_reason={finish_reason!r})")
 
 _SYSTEM = """\
 You are a scientific claim decomposer. Given a passage, extract every atomic factual \
@@ -54,8 +63,10 @@ def decompose(
             vLLM models that require it to produce a reasoning trace.
 
     Returns:
-        Tuple of ``(extracted_atoms, thinking_trace)``.  Returns ``([], "")``
-        on failure.
+        Tuple of ``(extracted_atoms, thinking_trace)``.
+
+    Raises:
+        DecomposeError: On API failure or unparseable response.
     """
     extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
     max_tokens = 8192 if enable_thinking else 1024
@@ -68,6 +79,7 @@ def decompose(
     if cached is not None:
         return cached["atoms"], cached.get("thinking_trace", "")
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
@@ -75,13 +87,14 @@ def decompose(
             max_tokens=max_tokens,
             extra_body=extra,
         )
+        _finish_reason = response.choices[0].finish_reason
         raw = response.choices[0].message.content or ""
         if debug:
             print(f"[decompose] completion returned:\n{raw}", flush=True)
         thinking = _extract_thinking(response, raw)
         atoms = _Output.model_validate_json(extract_json(raw)).atoms
-    except Exception:
-        return [], ""
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise DecomposeError(type(e).__qualname__, _finish_reason) from e
 
     cache.set(cache_key, {"atoms": atoms, "thinking_trace": thinking})
     return atoms, thinking

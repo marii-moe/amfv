@@ -30,7 +30,7 @@ import yaml
 from tqdm import tqdm
 
 from amfv_eval._cache import GenerationCache
-from amfv_eval._decompose import decompose
+from amfv_eval._decompose import DecomposeError, decompose
 from amfv_eval._judge import (
     JudgeError,
     judge_atoms,
@@ -44,6 +44,7 @@ from amfv_eval.metrics import compute_metrics, print_report
 from amfv_eval.scifact import group_claims, load_claims
 
 _DEFAULT_BASE_URL = "http://localhost:8000/v1"
+_MAX_DECOMPOSE_ATTEMPTS = 3
 
 # Base directory for resolving relative paths from YAML config.
 # Set via the DIR environment variable, e.g. DIR=/mount/marii python slurm/pipeline.py …
@@ -176,17 +177,43 @@ def _decompose_examples(
 ) -> Generator[dict, None, None]:
     """Decompose each passage. Yields records; checks _shutdown between items."""
     for ex in tqdm(examples, desc="decomposing", unit="ex"):
-        atoms, trace = decompose(
-            ex["passage"], client=client, model=model, cache=cache,
-            enable_thinking=enable_thinking, debug=debug,
-        )
         record = dict(ex)
         record.setdefault("decompositions", [])
-        record["decompositions"].append({
-            "model": model,
-            "extracted_atoms": atoms,
-            "thinking_trace": trace,
-        })
+
+        last_error: DecomposeError | None = None
+        for attempt in range(_MAX_DECOMPOSE_ATTEMPTS):
+            try:
+                atoms, trace = decompose(
+                    ex["passage"], client=client, model=model, cache=cache,
+                    enable_thinking=enable_thinking, debug=debug,
+                )
+                record["decompositions"].append({
+                    "model": model,
+                    "extracted_atoms": atoms,
+                    "thinking_trace": trace,
+                })
+                last_error = None
+                break
+            except DecomposeError as e:
+                last_error = e
+                print(
+                    f"[WARNING] decompose attempt {attempt + 1}/{_MAX_DECOMPOSE_ATTEMPTS}"
+                    f" failed for {ex.get('id', '?')}: {e}",
+                    file=sys.stderr, flush=True,
+                )
+
+        if last_error is not None:
+            record["decompositions"].append({
+                "model": model,
+                "extracted_atoms": [],
+                "thinking_trace": "",
+                "error": {
+                    "exception": last_error.exception_type,
+                    "finish_reason": last_error.finish_reason,
+                    "attempts": _MAX_DECOMPOSE_ATTEMPTS,
+                },
+            })
+
         yield record
         if _shutdown:
             break

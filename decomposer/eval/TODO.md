@@ -63,7 +63,7 @@ flakiness silently edits the dataset.
       model scores badly".
 - [x] Set `max_retries` on the client — currently running the SDK default.
 - [ ] Purge the existing cache. Entries are indistinguishable from real results.
-- [ ] Purge or re-run any `decomposed_*.jsonl` / `results_*.jsonl` records with
+- [x] Purge or re-run any `decomposed_*.jsonl` / `results_*.jsonl` records with
       empty `extracted_atoms`. `_cmd_decompose` resumes off `_load_completed_ids`,
       so a record written after a vLLM hiccup is marked done and will never
       self-heal.
