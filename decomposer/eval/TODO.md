@@ -55,7 +55,7 @@ error as `valid=False` and routes the example to the failures file, so judge
 flakiness silently edits the dataset.
 
 - [x] Never cache a failure. Raise or return a sentinel; let the next run retry.
-- [ ] Persist an `error` field with exception type and `finish_reason`.
+- [x] Persist an `error` field with exception type and `finish_reason`.
 - [x] Exclude errored records from metrics; do not zero-fill. Report
       `n_errored` / `error_rate` at the top of the report.
 - [x] Narrow `except Exception` to `openai.APIError`, `json.JSONDecodeError`, and

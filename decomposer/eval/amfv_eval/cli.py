@@ -32,6 +32,7 @@ from tqdm import tqdm
 from amfv_eval._cache import GenerationCache
 from amfv_eval._decompose import decompose
 from amfv_eval._judge import (
+    JudgeError,
     judge_atoms,
     judge_context_extraction,
     judge_operator_awareness,
@@ -211,25 +212,31 @@ def _judge_examples(
         atoms: list[str] = latest["extracted_atoms"]
         trace: str = latest["thinking_trace"]
 
-        judge_errors: list[str] = []
+        judge_errors: list[dict] = []
 
-        atom_covered = judge_atoms(
-            ex["required_atoms"], atoms, client=client, model=model, cache=cache
-        )
-        if atom_covered is None:
-            judge_errors.append("judge_atoms")
+        atom_covered = None
+        try:
+            atom_covered = judge_atoms(
+                ex["required_atoms"], atoms, client=client, model=model, cache=cache
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_atoms", "exception": e.exception_type, "finish_reason": e.finish_reason})
 
-        context_extracted = judge_context_extraction(
-            ex.get("context_sentences", []), atoms, client=client, model=model, cache=cache
-        )
-        if context_extracted is None:
-            judge_errors.append("judge_context_extraction")
+        context_extracted = None
+        try:
+            context_extracted = judge_context_extraction(
+                ex.get("context_sentences", []), atoms, client=client, model=model, cache=cache
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_context_extraction", "exception": e.exception_type, "finish_reason": e.finish_reason})
 
-        operators_noticed = judge_operator_awareness(
-            ex["operators"], trace, client=client, model=model, cache=cache
-        )
-        if operators_noticed is None:
-            judge_errors.append("judge_operator_awareness")
+        operators_noticed = None
+        try:
+            operators_noticed = judge_operator_awareness(
+                ex["operators"], trace, client=client, model=model, cache=cache
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_operator_awareness", "exception": e.exception_type, "finish_reason": e.finish_reason})
 
         passed = (
             not judge_errors
@@ -238,9 +245,9 @@ def _judge_examples(
         )
 
         n_gold = len(atom_covered) if atom_covered is not None else 0
-        recall = sum(atom_covered) / n_gold if n_gold else (1.0 if atom_covered is not None else None)
+        recall = sum(atom_covered) / n_gold if (atom_covered is not None and n_gold) else (1.0 if atom_covered is not None else None)
         n_ctx = len(context_extracted) if context_extracted is not None else 0
-        ctx_precision = (1.0 - sum(context_extracted) / n_ctx) if n_ctx else (1.0 if context_extracted is not None else None)
+        ctx_precision = (1.0 - sum(context_extracted) / n_ctx) if (context_extracted is not None and n_ctx) else (1.0 if context_extracted is not None else None)
         op_awareness = (
             sum(operators_noticed.values()) / len(operators_noticed)
             if operators_noticed else (1.0 if operators_noticed is not None else None)
@@ -305,25 +312,32 @@ def _validate_dataset_examples(
         source_claims = [c["claim"] for c in ex.get("source_claims", [])]
         stats: dict = {}
 
-        source_coverage = judge_source_claims(
-            source_claims, ex["passage"], ex["required_atoms"],
-            client=client, model=model, cache=cache, stats=stats,
-        )
-        operators_applied = judge_operators(
-            ex["operators"], ex["passage"],
-            client=client, model=model, cache=cache, stats=stats,
-        )
+        judge_errors: list[dict] = []
 
-        judge_errors: list[str] = []
-        if source_coverage is None:
-            judge_errors.append("judge_source_claims")
-        if operators_applied is None:
-            judge_errors.append("judge_operators")
+        source_coverage = None
+        try:
+            source_coverage = judge_source_claims(
+                source_claims, ex["passage"], ex["required_atoms"],
+                client=client, model=model, cache=cache, stats=stats,
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_source_claims", "exception": e.exception_type, "finish_reason": e.finish_reason})
+
+        operators_applied = None
+        try:
+            operators_applied = judge_operators(
+                ex["operators"], ex["passage"],
+                client=client, model=model, cache=cache, stats=stats,
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_operators", "exception": e.exception_type, "finish_reason": e.finish_reason})
 
         valid = (
             not judge_errors
+            and source_coverage is not None
             and all(source_coverage["in_passage"])
             and all(source_coverage["in_gold"])
+            and operators_applied is not None
             and all(operators_applied.values())
         )
 

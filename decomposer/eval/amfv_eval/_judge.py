@@ -13,12 +13,22 @@ from amfv_eval.operators import get_operator
 from amfv_eval._utils import extract_json, split_thinking
 
 __all__ = [
+    "JudgeError",
     "judge_atoms",
     "judge_operators",
     "judge_source_claims",
     "judge_operator_awareness",
     "judge_context_extraction",
 ]
+
+
+class JudgeError(Exception):
+    """Raised by a judge function when the API call or response parsing fails."""
+
+    def __init__(self, exception_type: str, finish_reason: str | None = None) -> None:
+        self.exception_type = exception_type
+        self.finish_reason = finish_reason
+        super().__init__(f"{exception_type} (finish_reason={finish_reason!r})")
 
 _ATOM_SYSTEM = """\
 You are evaluating whether a set of extracted atomic claims covers a set of gold \
@@ -148,7 +158,7 @@ def judge_atoms(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> list[bool] | None:
+) -> list[bool]:
     """Judge which gold atoms are semantically covered by extracted atoms.
 
     Args:
@@ -160,6 +170,9 @@ def judge_atoms(
 
     Returns:
         One bool per gold atom; ``True`` means covered.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
     """
     gold_text = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(required_atoms))
     extr_text = "\n".join(f"- {a}" for a in extracted_atoms) if extracted_atoms else "(none)"
@@ -173,20 +186,22 @@ def judge_atoms(
     if cached is not None:
         return cached["atom_covered"]
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
-        if response.choices[0].finish_reason == "length" and not response.choices[0].message.content:
+        _finish_reason = response.choices[0].finish_reason
+        if _finish_reason == "length" and not response.choices[0].message.content:
             print("[WARNING] judge_atoms: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
         covered = _AtomOutput.model_validate_json(extract_json(content)).atom_covered
         # Align to gold length in case the model under/over-counts
         covered = (covered + [False] * len(required_atoms))[: len(required_atoms)]
-    except (openai.APIError, json.JSONDecodeError, ValidationError):
-        return None
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
 
     cache.set(cache_key, {"atom_covered": covered})
     return covered
@@ -200,7 +215,7 @@ def judge_operators(
     model: str,
     cache: GenerationCache,
     stats: dict | None = None,
-) -> dict[str, bool] | None:
+) -> dict[str, bool]:
     """Judge whether a passage correctly applies each specified operator.
 
     Args:
@@ -212,6 +227,9 @@ def judge_operators(
 
     Returns:
         Mapping from operator name to applied boolean.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
     """
     op_desc = "\n".join(
         f"- {name}: {get_operator(name).description}" for name in operators
@@ -226,13 +244,15 @@ def judge_operators(
     if cached is not None:
         return cached["operators_applied"]
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
-        if response.choices[0].finish_reason == "length":
+        _finish_reason = response.choices[0].finish_reason
+        if _finish_reason == "length":
             print("[WARNING] judge_operators: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
         if stats is not None:
@@ -242,8 +262,8 @@ def judge_operators(
         applied = _OperatorOutput.model_validate_json(extract_json(content)).operators_applied
         for op in operators:
             applied.setdefault(op, False)
-    except (openai.APIError, json.JSONDecodeError, ValidationError):
-        return None
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
 
     cache.set(cache_key, {"operators_applied": applied})
     return applied
@@ -258,13 +278,16 @@ def judge_source_claims(
     model: str,
     cache: GenerationCache,
     stats: dict | None = None,
-) -> dict[str, list[bool]] | None:
+) -> dict[str, list[bool]]:
     """Check that each source claim is represented in the passage and in the gold atoms.
 
     Used during dataset creation to verify example quality.
 
     Returns:
         Dict with ``"in_passage"`` and ``"in_gold"`` lists, one bool per source claim.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
     """
     n = len(source_claims)
     claims_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(source_claims))
@@ -283,13 +306,15 @@ def judge_source_claims(
     if cached is not None:
         return {"in_passage": cached["in_passage"], "in_gold": cached["in_gold"]}
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
-        if response.choices[0].finish_reason == "length":
+        _finish_reason = response.choices[0].finish_reason
+        if _finish_reason == "length":
             print("[WARNING] judge_source_claims: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
         if stats is not None:
@@ -299,8 +324,8 @@ def judge_source_claims(
         out = _SourceClaimOutput.model_validate_json(extract_json(content))
         in_passage = (out.in_passage + [False] * n)[:n]
         in_gold = (out.in_gold + [False] * n)[:n]
-    except (openai.APIError, json.JSONDecodeError, ValidationError):
-        return None
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
 
     result = {"in_passage": in_passage, "in_gold": in_gold}
     cache.set(cache_key, result)
@@ -314,13 +339,16 @@ def judge_operator_awareness(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> dict[str, bool] | None:
+) -> dict[str, bool]:
     """Score whether a thinking trace mentions each operator relationship.
 
     Used during downstream model evaluation — not a hard pass/fail criterion.
 
     Returns:
         Mapping from operator name to noticed boolean.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
     """
     op_desc = "\n".join(
         f"- {name}: {get_operator(name).description}" for name in operators
@@ -338,20 +366,22 @@ def judge_operator_awareness(
     if cached is not None:
         return cached["operators_noticed"]
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
-        if response.choices[0].finish_reason == "length":
+        _finish_reason = response.choices[0].finish_reason
+        if _finish_reason == "length":
             print("[WARNING] judge_operator_awareness: response truncated — reasoning did not finish", file=sys.stderr, flush=True)
         content = response.choices[0].message.content or ""
         noticed = _OperatorAwarenessOutput.model_validate_json(extract_json(content)).operators_noticed
         for op in operators:
             noticed.setdefault(op, False)
-    except (openai.APIError, json.JSONDecodeError, ValidationError):
-        return None
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
 
     cache.set(cache_key, {"operators_noticed": noticed})
     return noticed
@@ -364,7 +394,7 @@ def judge_context_extraction(
     client: openai.OpenAI,
     model: str,
     cache: GenerationCache,
-) -> list[bool] | None:
+) -> list[bool]:
     """Judge whether context sentences were incorrectly extracted as atomic claims.
 
     Args:
@@ -376,6 +406,9 @@ def judge_context_extraction(
 
     Returns:
         One bool per context sentence; ``True`` means it was wrongly extracted.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
     """
     if not context_sentences:
         return []
@@ -392,17 +425,19 @@ def judge_context_extraction(
     if cached is not None:
         return cached["context_extracted"]
 
+    _finish_reason: str | None = None
     try:
         response = client.chat.completions.create(
             model=model,
             messages=messages,  # type: ignore[arg-type]
             max_tokens=MAX_TOKENS,
         )
+        _finish_reason = response.choices[0].finish_reason
         content = response.choices[0].message.content or ""
         extracted = _ContextOutput.model_validate_json(extract_json(content)).context_extracted
         extracted = (extracted + [False] * len(context_sentences))[: len(context_sentences)]
-    except (openai.APIError, json.JSONDecodeError, ValidationError):
-        return None
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
 
     cache.set(cache_key, {"context_extracted": extracted})
     return extracted
