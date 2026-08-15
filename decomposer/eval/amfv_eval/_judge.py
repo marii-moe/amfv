@@ -128,7 +128,7 @@ Respond with valid JSON:
 One boolean per context sentence, in the same order.
 """
 
-MAX_TOKENS = 4096
+MAX_TOKENS = 16384
 
 class _AtomOutput(BaseModel):
     atom_covered: list[bool]

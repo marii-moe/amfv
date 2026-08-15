@@ -69,7 +69,7 @@ def decompose(
         DecomposeError: On API failure or unparseable response.
     """
     extra = {"chat_template_kwargs": {"enable_thinking": True}} if enable_thinking else {}
-    max_tokens = 8192 if enable_thinking else 1024
+    max_tokens = 16384 if enable_thinking else 2048
     messages = [
         {"role": "system", "content": _SYSTEM},
         {"role": "user", "content": f"Passage: {passage}"},

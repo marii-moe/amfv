@@ -141,6 +141,23 @@ def _any_too_similar(claims: list[ScifactClaim], threshold: float = 0.75) -> boo
     return False
 
 
+def _has_conflicting_labels(claims: list[ScifactClaim]) -> bool:
+    """Return True if any two claims share a source document but have conflicting labels.
+
+    Fusing a SUPPORTED claim with a REFUTED/NEI claim on the same document
+    produces incoherent passages where the generator must quietly alter a fact
+    to resolve the contradiction.
+    """
+    for i in range(len(claims)):
+        for j in range(i + 1, len(claims)):
+            a, b = claims[i], claims[j]
+            if set(a.cited_doc_ids) & set(b.cited_doc_ids):
+                labels = {a.label, b.label}
+                if "SUPPORTED" in labels and labels & {"REFUTED", "NEI"}:
+                    return True
+    return False
+
+
 def _build_user_message(claims: list[ScifactClaim], operator_names: list[str]) -> str:
     """Format the per-request user message."""
     claim_lines = "\n".join(f"  {i + 1}. {c.claim}" for i, c in enumerate(claims))
@@ -290,6 +307,8 @@ def generate_split(
                 n_claims_needed = min(len(group.claims), 2)
             sampled_claims = list(rng.sample(list(group.claims), n_claims_needed))
             if _any_too_similar(sampled_claims):
+                continue
+            if _has_conflicting_labels(sampled_claims):
                 continue
             op_names = _sample_operators(rng, n_ops)
             dedup_key = json.dumps(
