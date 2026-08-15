@@ -36,11 +36,15 @@ if [[ "${_VLLM_ARG3}" == *.sqsh || "${_VLLM_ARG3}" == docker://* ]]; then
     # Mount sources must exist before enroot will accept them
     mkdir -p "${HF_HOME}" "${_VLLM_LOG_DIR}"
 
+    # Route Triton's kernel cache into the container's ephemeral /tmp so stale
+    # .cubin/.ptx entries from killed jobs never persist to the next run.
+    export TRITON_CACHE_DIR=/tmp/triton_cache
+
     echo "[vllm] Using container: ${_VLLM_ARG3}"
     srun --ntasks=1 \
          --container-image="${_VLLM_ARG3}" \
          --container-mounts="${HF_HOME}:${HF_HOME},${_VLLM_LOG_DIR}:${_VLLM_LOG_DIR},/dev/shm:/dev/shm" \
-         --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN" \
+         --container-env="HF_HOME,HUGGING_FACE_HUB_TOKEN,TRITON_CACHE_DIR" \
          bash -c "vllm serve '${_VLLM_MODEL}' \
              --tensor-parallel-size '${_VLLM_TP}' \
              --port '${_VLLM_PORT}' \

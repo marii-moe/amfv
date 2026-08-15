@@ -82,6 +82,41 @@ produces. Until this exists, a few points between two models is not interpretabl
       planted distractors are known-answer items, so a `verifiable = True` on one
       is a measured judge error.
 
+### 4b. Domain-expert second pass on `supported` — *after pilot 1*
+
+Pilot 1 uses non-domain annotators, which is fine for `standalone`, `atomic`, and
+`subsumed_by`, and probably fine for most of `supported`. It is not reliable for
+the subclass of `supported` failures where an atom quietly shifts an assertion in
+a way that only reads as wrong with the background knowledge:
+
+- **Relation shifts that look lexical** — passage says a drug *binds* a receptor,
+  atom says it *activates* it. Binding is not activation; antagonists bind.
+- **Endpoint substitutions** — *"increased progression-free survival"* →
+  *"increased survival"*; *"reduced HbA1c"* → *"improved glycaemic control"*.
+  Different endpoint, not a paraphrase.
+- **Abbreviations and standard analyte names** — whether *"CRP levels fell"* is
+  `standalone` depends on knowing CRP is a standard term rather than an
+  unexpanded referent. Non-domain and domain annotators disagree here in both
+  directions.
+
+This is also where the judge is weakest, for the same reason, and where a missed
+defect does the most downstream damage: the verifier fact-checks a subtly
+different claim against real evidence and returns a confidently wrong verdict.
+If neither the annotators nor the judge catch this class, the calibration number
+will overstate judge quality on exactly the errors that matter most.
+
+- [ ] Deliberately seed 10–20 known relation-shift and endpoint-substitution
+      atoms into pilot 1, so the non-domain miss rate on this class is *measured*
+      rather than assumed.
+- [ ] Re-annotate the `supported` label on a domain-expert subset (~50 atoms,
+      weighted toward atoms where pilot 1 annotators disagreed or marked
+      `uncertain`).
+- [ ] Report non-domain vs domain agreement on `supported` separately. If it is
+      low, `supported` from pilot 1 is a ceiling estimate, not a measurement, and
+      should be reported as such wherever the calibration number appears.
+- [ ] Fold the resulting disagreements into the guideline as numbered rulings,
+      then re-freeze.
+
 ### 5. Cache keys must cover the request payload
 
 Keys are built from identifiers (`model`, claim IDs, operator names), not the
