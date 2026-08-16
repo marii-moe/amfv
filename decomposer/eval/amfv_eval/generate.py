@@ -141,6 +141,20 @@ def _any_too_similar(claims: list[ScifactClaim], threshold: float = 0.75) -> boo
     return False
 
 
+def _all_disjoint_docs(claims: list[ScifactClaim]) -> bool:
+    """Return True if every pair of claims cites entirely different documents.
+
+    Claims sharing a source document are often variants or direct contradictions
+    of the same abstract finding. Requiring disjoint doc sets breaks that
+    relationship structurally without needing a judge call.
+    """
+    for i in range(len(claims)):
+        for j in range(i + 1, len(claims)):
+            if not set(claims[i].cited_doc_ids).isdisjoint(claims[j].cited_doc_ids):
+                return False
+    return True
+
+
 def _has_conflicting_labels(claims: list[ScifactClaim]) -> bool:
     """Return True if any two claims share a source document but have conflicting labels.
 
@@ -309,6 +323,8 @@ def generate_split(
             if _any_too_similar(sampled_claims):
                 continue
             if _has_conflicting_labels(sampled_claims):
+                continue
+            if not _all_disjoint_docs(sampled_claims):
                 continue
             op_names = _sample_operators(rng, n_ops)
             dedup_key = json.dumps(

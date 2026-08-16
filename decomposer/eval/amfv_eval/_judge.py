@@ -15,6 +15,7 @@ from amfv_eval._utils import extract_json, split_thinking
 __all__ = [
     "JudgeError",
     "judge_atoms",
+    "judge_claim_consistency",
     "judge_operators",
     "judge_source_claims",
     "judge_operator_awareness",
@@ -128,6 +129,17 @@ Respond with valid JSON:
 One boolean per context sentence, in the same order.
 """
 
+_CONSISTENCY_SYSTEM = """\
+You are checking whether a set of scientific claims can all be simultaneously true.
+
+If any two claims directly contradict each other — one asserts X while another \
+asserts not-X, or they make mutually exclusive claims about the same subject — \
+output false. Otherwise output true.
+
+Respond with valid JSON:
+  {"consistent": <bool>}
+"""
+
 MAX_TOKENS = 16384
 
 class _AtomOutput(BaseModel):
@@ -149,6 +161,10 @@ class _OperatorAwarenessOutput(BaseModel):
 
 class _ContextOutput(BaseModel):
     context_extracted: list[bool]
+
+
+class _ConsistencyOutput(BaseModel):
+    consistent: bool
 
 
 def judge_atoms(
@@ -441,3 +457,53 @@ def judge_context_extraction(
 
     cache.set(cache_key, {"context_extracted": extracted})
     return extracted
+
+
+def judge_claim_consistency(
+    claims: list[str],
+    *,
+    client: openai.OpenAI,
+    model: str,
+    cache: GenerationCache,
+) -> bool:
+    """Judge whether a set of claims can all be simultaneously true.
+
+    Args:
+        claims: Claim texts to check for mutual consistency.
+        client: OpenAI-compatible client.
+        model: Judge model name.
+        cache: Disk cache.
+
+    Returns:
+        ``True`` if the claims are mutually consistent, ``False`` if any pair
+        directly contradicts.
+
+    Raises:
+        JudgeError: On API failure or unparseable response.
+    """
+    claims_text = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(claims))
+    user_msg = f"Claims:\n{claims_text}"
+    messages = [
+        {"role": "system", "content": _CONSISTENCY_SYSTEM},
+        {"role": "user", "content": user_msg},
+    ]
+    cache_key = cache.key(model, json.dumps(messages))
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached["consistent"]
+
+    _finish_reason: str | None = None
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,  # type: ignore[arg-type]
+            max_tokens=MAX_TOKENS,
+        )
+        _finish_reason = response.choices[0].finish_reason
+        content = response.choices[0].message.content or ""
+        consistent = _ConsistencyOutput.model_validate_json(extract_json(content)).consistent
+    except (openai.APIError, json.JSONDecodeError, ValidationError) as e:
+        raise JudgeError(type(e).__qualname__, _finish_reason) from e
+
+    cache.set(cache_key, {"consistent": consistent})
+    return consistent

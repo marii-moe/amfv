@@ -34,6 +34,7 @@ from amfv_eval._decompose import DecomposeError, decompose
 from amfv_eval._judge import (
     JudgeError,
     judge_atoms,
+    judge_claim_consistency,
     judge_context_extraction,
     judge_operator_awareness,
     judge_operators,
@@ -359,6 +360,14 @@ def _validate_dataset_examples(
         except JudgeError as e:
             judge_errors.append({"judge": "judge_operators", "exception": e.exception_type, "finish_reason": e.finish_reason})
 
+        claims_consistent: bool | None = None
+        try:
+            claims_consistent = judge_claim_consistency(
+                source_claims, client=client, model=model, cache=cache,
+            )
+        except JudgeError as e:
+            judge_errors.append({"judge": "judge_claim_consistency", "exception": e.exception_type, "finish_reason": e.finish_reason})
+
         valid = (
             not judge_errors
             and source_coverage is not None
@@ -366,6 +375,7 @@ def _validate_dataset_examples(
             and all(source_coverage["in_gold"])
             and operators_applied is not None
             and all(operators_applied.values())
+            and claims_consistent is True
         )
 
         record = dict(ex)
@@ -379,6 +389,8 @@ def _validate_dataset_examples(
             validation["source_in_gold"] = source_coverage["in_gold"]
         if operators_applied is not None:
             validation["operators_applied"] = operators_applied
+        if claims_consistent is not None:
+            validation["claims_consistent"] = claims_consistent
         if not valid and stats:
             validation["thinking_chars"] = stats.get("thinking_chars", 0)
             validation["judge_responses"] = stats.get("responses", [])
