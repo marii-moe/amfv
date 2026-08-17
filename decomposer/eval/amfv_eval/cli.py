@@ -97,7 +97,8 @@ def _load_yaml_defaults(config_path: Path, command: str, step: int | None) -> di
             defaults[key] = val
 
     # Command-specific settings
-    cmd_cfg = cfg.get(command)
+    yaml_key = command.replace("-", "_")
+    cmd_cfg = cfg.get(yaml_key)
     if cmd_cfg is None:
         return defaults
 
@@ -106,7 +107,7 @@ def _load_yaml_defaults(config_path: Path, command: str, step: int | None) -> di
             return defaults
         cmd_cfg = cmd_cfg[step]
 
-    path_keys = {"out", "failures", "input", "cache_dir", "out_dir", "in_dir", "data_dir"}
+    path_keys = {"out", "failures", "input", "cache_dir", "out_dir", "in_dir", "data_dir", "similar_pairs"}
     for key, val in cmd_cfg.items():
         if key in path_keys and val is not None:
             val = _resolve_path(val)
@@ -407,6 +408,31 @@ def _validate_dataset_examples(
 # ---------------------------------------------------------------------------
 
 
+def _cmd_embed_claims(args: argparse.Namespace) -> None:
+    from amfv_eval._embed import embed_and_find_similar
+
+    if args.out is None:
+        sys.exit("amfv-eval embed-claims: error: --out is required (or set via --config)")
+    _ensure_parent(args.out)
+
+    embed_and_find_similar(
+        args.splits,
+        model_name=args.model,
+        threshold=args.threshold,
+        out=args.out,
+        data_dir=args.data_dir,
+        print_histogram=args.print_histogram,
+    )
+
+
+def _load_similar_pairs(path: Path) -> dict[int, frozenset[int]]:
+    data = json.loads(path.read_text())
+    return {
+        int(k): frozenset(v for v in vs)
+        for k, vs in data.get("similar_pairs", {}).items()
+    }
+
+
 def _cmd_generate(args: argparse.Namespace) -> None:
     if args.model is None:
         sys.exit("amfv-eval generate: error: --model is required (or set via --config)")
@@ -416,6 +442,15 @@ def _cmd_generate(args: argparse.Namespace) -> None:
 
     client = openai.OpenAI(base_url=_normalise_base_url(args.base_url), api_key="EMPTY", max_retries=args.max_retries)
     cache = GenerationCache(cache_dir=args.cache_dir)
+
+    similar_pairs: dict[int, frozenset[int]] | None = None
+    similar_pairs_path: Path | None = getattr(args, "similar_pairs", None)
+    if similar_pairs_path is not None and similar_pairs_path.exists():
+        print(f"Loading embedding similar pairs from {similar_pairs_path}…", flush=True)
+        similar_pairs = _load_similar_pairs(similar_pairs_path)
+        print(f"  {len(similar_pairs):,} claims have similar neighbors.", flush=True)
+    elif similar_pairs_path is not None:
+        print(f"[WARNING] similar_pairs path not found ({similar_pairs_path}); proceeding without it.", file=sys.stderr, flush=True)
 
     all_examples: list[dict] = []
 
@@ -438,6 +473,7 @@ def _cmd_generate(args: argparse.Namespace) -> None:
             client=client, model=args.model, cache=cache,
             seed=args.seed, target=target,
             concurrency=args.concurrency, debug=args.debug,
+            similar_pairs=similar_pairs,
         )
         all_examples.extend(ex.to_dict() for ex in examples)
         print(f"[{split}] {len(examples)} passages generated.", flush=True)
@@ -631,6 +667,25 @@ def main(argv: list[str] | None = None) -> None:
     )
     subs = parser.add_subparsers(dest="command", required=True)
 
+    # embed-claims
+    emb = subs.add_parser("embed-claims", help="Embed SciFact claims and precompute similar pairs.")
+    emb.add_argument("--config", type=Path, default=None, help="YAML config file.")
+    emb.add_argument("--out", type=Path, default=None, help="Output JSON file for similar pairs.")
+    emb.add_argument(
+        "--model", default="Simonlee711/Clinical_ModernBERT",
+        help="HuggingFace model for embedding (default: Simonlee711/Clinical_ModernBERT).",
+    )
+    emb.add_argument(
+        "--threshold", type=float, default=0.85,
+        help="Cosine similarity threshold above which a pair is considered similar (default: 0.85).",
+    )
+    emb.add_argument(
+        "--splits", nargs="+", choices=["train", "validation", "test"],
+        default=["train", "validation", "test"],
+    )
+    emb.add_argument("--data-dir", type=Path, default=None, help="Directory containing SciFact JSONL files.")
+    emb.add_argument("--print-histogram", action="store_true", default=False, help="Print cosine similarity histogram to stdout.")
+
     # generate
     gen = subs.add_parser("generate", help="Generate passages from SciFact and validate dataset quality.")
     _add_common_args(gen)
@@ -677,7 +732,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # Apply YAML defaults to the relevant subparser before the full parse.
     subparser_map = {
-        "generate": gen, "filter": filt, "decompose": dec,
+        "embed-claims": emb, "generate": gen, "filter": filt, "decompose": dec,
         "eval": ev, "shard": sh, "merge": mg,
     }
     if pre_args.config and pre_args.command in subparser_map:
@@ -689,6 +744,7 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     {
+        "embed-claims": _cmd_embed_claims,
         "generate": _cmd_generate,
         "filter": _cmd_filter,
         "decompose": _cmd_decompose,

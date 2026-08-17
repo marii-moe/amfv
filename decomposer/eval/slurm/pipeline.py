@@ -153,6 +153,27 @@ def run_pipeline(config_path: Path, dry_run: bool = False) -> None:
     prev_job: str | None = None
 
     # ------------------------------------------------------------------
+    # 0. Embed claims (optional — produces similar_pairs file used by generate)
+    # ------------------------------------------------------------------
+    embed_cfg = cfg.get("embed_claims")
+    if embed_cfg:
+        embed_marker = markers_dir / "embed_claims.done"
+        if is_done(embed_marker):
+            print("embed_claims: already done, skipping.")
+        else:
+            prev_job = sbatch(
+                slurm_dir / "embed_claims.sbatch",
+                context={
+                    **gpu_common,
+                    "job_name": "amfv-embed-claims",
+                    "qos": qos_for(embed_cfg),
+                    "marker": str(embed_marker),
+                },
+                dependency=prev_job,
+                dry_run=dry_run,
+            )
+
+    # ------------------------------------------------------------------
     # 1. Generate
     # ------------------------------------------------------------------
     gen_cfg = cfg["generate"]

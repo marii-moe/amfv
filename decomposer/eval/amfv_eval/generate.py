@@ -141,18 +141,16 @@ def _any_too_similar(claims: list[ScifactClaim], threshold: float = 0.75) -> boo
     return False
 
 
-def _all_disjoint_docs(claims: list[ScifactClaim]) -> bool:
-    """Return True if every pair of claims cites entirely different documents.
-
-    Claims sharing a source document are often variants or direct contradictions
-    of the same abstract finding. Requiring disjoint doc sets breaks that
-    relationship structurally without needing a judge call.
-    """
+def _has_similar_embedding(
+    claims: list[ScifactClaim], similar_pairs: dict[int, frozenset[int]]
+) -> bool:
+    """Return True if any pair of claims are flagged as semantically similar."""
     for i in range(len(claims)):
+        neighbors = similar_pairs.get(claims[i].id, frozenset())
         for j in range(i + 1, len(claims)):
-            if not set(claims[i].cited_doc_ids).isdisjoint(claims[j].cited_doc_ids):
-                return False
-    return True
+            if claims[j].id in neighbors:
+                return True
+    return False
 
 
 def _has_conflicting_labels(claims: list[ScifactClaim]) -> bool:
@@ -274,6 +272,7 @@ def generate_split(
     target: int | None = None,
     concurrency: int = 8,
     debug: bool = False,
+    similar_pairs: dict[int, frozenset[int]] | None = None,
 ) -> list[EvalExample]:
     """Generate eval examples for one split.
 
@@ -324,7 +323,7 @@ def generate_split(
                 continue
             if _has_conflicting_labels(sampled_claims):
                 continue
-            if not _all_disjoint_docs(sampled_claims):
+            if similar_pairs is not None and _has_similar_embedding(sampled_claims, similar_pairs):
                 continue
             op_names = _sample_operators(rng, n_ops)
             dedup_key = json.dumps(
