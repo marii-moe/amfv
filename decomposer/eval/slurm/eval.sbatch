@@ -45,6 +45,8 @@ SHARD_FILE="{{ shard_dir }}/shard_$(printf '%03d' "${TASK_ID}").jsonl"
 SHARD_OUT="{{ out_dir }}/shard_$(printf '%03d' "${TASK_ID}").jsonl"
 SHARD_MARKER="{{ out_dir }}/shard_$(printf '%03d' "${TASK_ID}").done"
 
+mkdir -p "{{ out_dir }}"
+
 if [ -f "${SHARD_MARKER}" ]; then
     echo "Shard ${TASK_ID} already done, skipping."
     exit 0
@@ -55,8 +57,6 @@ if [ ! -f "${SHARD_FILE}" ]; then
     touch "${SHARD_MARKER}"
     exit 0
 fi
-
-mkdir -p "{{ out_dir }}"
 
 export HF_HOME="{{ hf_home }}"
 export SLURM_LOG_DIR="{{ output_dir }}/slurm"
