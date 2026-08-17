@@ -9,7 +9,7 @@ from typing import Literal
 
 from amfv_eval.types import ClaimGroup, ScifactClaim
 
-__all__ = ["load_claims", "group_claims"]
+__all__ = ["load_claims", "load_corpus", "group_claims"]
 
 _SPLIT_FILES: dict[str, str] = {
     "train": "claims_train.jsonl",
@@ -62,6 +62,41 @@ def load_claims(
             )
         )
     return claims
+
+
+def load_corpus(data_dir: Path | None = None) -> dict[int, str]:
+    """Load the SciFact corpus as a mapping from doc_id to full text.
+
+    Text is ``title + " " + " ".join(abstract_sentences)``.
+
+    Args:
+        data_dir: Directory containing ``corpus.jsonl``.  Falls back to
+            ``~/.cache/amfv_eval/scifact/corpus.jsonl`` (downloaded on demand
+            alongside the claim splits if absent).
+    """
+    if data_dir is not None:
+        path = Path(data_dir) / "corpus.jsonl"
+        if not path.exists():
+            raise FileNotFoundError(
+                f"SciFact corpus not found at {path}. "
+                "Expected filename: corpus.jsonl"
+            )
+    else:
+        path = _CACHE_DIR / "corpus.jsonl"
+        if not path.exists():
+            _download_all_splits()
+        if not path.exists():
+            raise RuntimeError(
+                f"SciFact corpus missing after download attempt. "
+                f"Place corpus.jsonl manually at: {path}"
+            )
+
+    corpus: dict[int, str] = {}
+    for row in _iter_jsonl(path):
+        abstract = row.get("abstract") or []
+        text = row.get("title", "") + " " + " ".join(abstract)
+        corpus[int(row["doc_id"])] = text.strip()
+    return corpus
 
 
 def group_claims(claims: list[ScifactClaim]) -> list[ClaimGroup]:
@@ -127,9 +162,10 @@ def _download_all_splits() -> None:
             urllib.request.urlretrieve(_SCIFACT_S3_URL, str(tar_path))
             with tarfile.open(tar_path) as tar:
                 tar.extractall(tmp)
-            # The tar contains data/claims_train.jsonl, data/claims_dev.jsonl, etc.
+            # The tar contains data/claims_train.jsonl, data/claims_dev.jsonl,
+            # data/corpus.jsonl, etc.
             data_dir = Path(tmp) / "data"
-            for dest_name in _SPLIT_FILES.values():
+            for dest_name in (*_SPLIT_FILES.values(), "corpus.jsonl"):
                 src = data_dir / dest_name
                 if src.exists():
                     shutil.copy2(src, _CACHE_DIR / dest_name)

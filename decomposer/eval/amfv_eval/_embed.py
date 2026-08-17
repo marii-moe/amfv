@@ -1,8 +1,16 @@
-"""Embed SciFact claims and identify semantically similar pairs."""
+"""Embed SciFact source documents and identify semantically similar claim pairs.
+
+For each cited document, we compute a dense embedding (mean-pool + L2 norm).
+Two claims are considered similar if any of claim A's cited docs has cosine
+similarity ≥ threshold with any of claim B's cited docs (max over cross-pairs).
+The precomputed ``similar_pairs`` output maps claim_id → [similar_claim_ids]
+and is consumed by the generation step to avoid fusing topically redundant claims.
+"""
 
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Literal
 
@@ -18,36 +26,70 @@ def embed_and_find_similar(
     data_dir: Path | None = None,
     print_histogram: bool = False,
 ) -> None:
-    """Embed all claims across splits and save similar pairs to *out*.
+    """Embed cited documents and save similar claim pairs to *out*.
+
+    Similarity between two claims is the **max** cosine similarity over all
+    (doc_a, doc_b) cross-pairs where doc_a is cited by claim A and doc_b is
+    cited by claim B.  This avoids the dilution effect of mean pooling and
+    directly answers "do these two claims draw on the same evidence?"
 
     Output JSON schema::
 
         {
           "model": "<model_name>",
+          "embed_target": "documents",
+          "similarity": "max",
           "threshold": 0.85,
+          "n_docs_embedded": 3145,
           "n_claims": 1109,
           "histogram": [{"bin": [-1.0, -0.9], "count": 0}, ...],
           "similar_pairs": {"<claim_id>": [<similar_id>, ...], ...}
         }
 
-    The histogram covers the full [-1, 1] cosine similarity range in 20 bins
-    of width 0.1. It is always saved and optionally printed.
+    The histogram covers pairwise document similarities (upper triangle of the
+    doc×doc matrix) in 20 bins of width 0.1 over [-1, 1].  It is always saved
+    and optionally printed to stdout.
     """
     import torch
-    import torch.nn.functional as F
     from transformers import AutoModel, AutoTokenizer
 
-    from amfv_eval.scifact import load_claims
+    from amfv_eval.scifact import load_claims, load_corpus
 
+    # ------------------------------------------------------------------
+    # Load claims and collect cited doc IDs
+    # ------------------------------------------------------------------
     all_claims = []
     for split in splits:
         all_claims.extend(load_claims(split, data_dir=data_dir))
 
-    n = len(all_claims)
+    n_claims = len(all_claims)
     claim_ids = [c.id for c in all_claims]
-    texts = [c.claim for c in all_claims]
+    cited_per_claim: list[list[int]] = [c.cited_doc_ids for c in all_claims]
 
-    print(f"[embed] Loaded {n} claims from splits: {splits}", flush=True)
+    needed_doc_ids: set[int] = set()
+    for ids in cited_per_claim:
+        needed_doc_ids.update(ids)
+
+    print(
+        f"[embed] {n_claims} claims across splits {splits}, "
+        f"citing {len(needed_doc_ids)} distinct documents.",
+        flush=True,
+    )
+
+    # ------------------------------------------------------------------
+    # Load corpus and embed only cited documents
+    # ------------------------------------------------------------------
+    print(f"[embed] Loading corpus…", flush=True)
+    corpus = load_corpus(data_dir=data_dir)
+    cited_corpus = {did: text for did, text in corpus.items() if did in needed_doc_ids}
+    missing = needed_doc_ids - cited_corpus.keys()
+    if missing:
+        print(f"[embed] WARNING: {len(missing)} cited doc IDs not found in corpus.", flush=True)
+
+    doc_ids_ordered = sorted(cited_corpus.keys())
+    texts = [cited_corpus[d] for d in doc_ids_ordered]
+    doc_id_to_idx: dict[int, int] = {d: i for i, d in enumerate(doc_ids_ordered)}
+    n_docs = len(texts)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[embed] Loading {model_name} on {device}…", flush=True)
@@ -55,38 +97,63 @@ def embed_and_find_similar(
     model = AutoModel.from_pretrained(model_name).to(device)
     model.eval()
 
-    print(f"[embed] Embedding {n} claims…", flush=True)
-    embeddings = _embed_texts(texts, tokenizer, model, device)  # [n, d] normalized
+    print(f"[embed] Embedding {n_docs} documents…", flush=True)
+    doc_embeddings = _embed_texts(texts, tokenizer, model, device)  # [n_docs, d]
 
-    print("[embed] Computing pairwise cosine similarities…", flush=True)
-    sims = (embeddings @ embeddings.T).cpu()  # [n, n]
+    # ------------------------------------------------------------------
+    # Pairwise document similarity and histogram
+    # ------------------------------------------------------------------
+    print(f"[embed] Computing {n_docs}×{n_docs} doc similarity matrix…", flush=True)
+    doc_sims = (doc_embeddings @ doc_embeddings.T).cpu()  # [n_docs, n_docs]
 
-    # Upper triangle indices (exclude diagonal)
-    idx = torch.triu_indices(n, n, offset=1)
-    upper = sims[idx[0], idx[1]]
+    didx = torch.triu_indices(n_docs, n_docs, offset=1)
+    upper_docs = doc_sims[didx[0], didx[1]]
 
-    histogram = _build_histogram(upper)
-
+    histogram = _build_histogram(upper_docs)
     if print_histogram:
         _print_histogram(histogram)
 
-    # Threshold to similar pairs
-    mask = upper >= threshold
-    similar_pairs: dict[str, list[int]] = {}
-    pair_i = idx[0][mask].tolist()
-    pair_j = idx[1][mask].tolist()
-    for i, j in zip(pair_i, pair_j):
-        ci, cj = str(claim_ids[i]), str(claim_ids[j])
-        similar_pairs.setdefault(ci, []).append(claim_ids[j])
-        similar_pairs.setdefault(cj, []).append(claim_ids[i])
+    # ------------------------------------------------------------------
+    # Translate doc-level similar pairs → claim-level similar_pairs (max)
+    #
+    # For each doc pair (da, db) with sim ≥ threshold, every claim citing da
+    # is similar to every claim citing db.
+    # ------------------------------------------------------------------
+    doc_to_claims: dict[int, list[int]] = defaultdict(list)
+    for claim_idx, doc_ids in enumerate(cited_per_claim):
+        for did in doc_ids:
+            if did in doc_id_to_idx:
+                doc_to_claims[did].append(claim_ids[claim_idx])
 
-    n_pairs = len(pair_i)
-    print(f"[embed] Found {n_pairs} similar pairs above threshold {threshold}.", flush=True)
+    mask = upper_docs >= threshold
+    n_similar_doc_pairs = int(mask.sum().item())
+    print(
+        f"[embed] {n_similar_doc_pairs} similar document pairs above threshold {threshold}.",
+        flush=True,
+    )
+
+    similar_pairs: dict[str, list[int]] = {}
+    for idx_a, idx_b in zip(didx[0][mask].tolist(), didx[1][mask].tolist()):
+        da, db = doc_ids_ordered[idx_a], doc_ids_ordered[idx_b]
+        for ca in doc_to_claims.get(da, []):
+            for cb in doc_to_claims.get(db, []):
+                if ca != cb:
+                    similar_pairs.setdefault(str(ca), []).append(cb)
+                    similar_pairs.setdefault(str(cb), []).append(ca)
+
+    # Deduplicate within each list
+    similar_pairs = {k: list(dict.fromkeys(v)) for k, v in similar_pairs.items()}
+
+    n_claim_pairs = sum(len(v) for v in similar_pairs.values()) // 2
+    print(f"[embed] {n_claim_pairs} similar claim pairs derived.", flush=True)
 
     result = {
         "model": model_name,
+        "embed_target": "documents",
+        "similarity": "max",
         "threshold": threshold,
-        "n_claims": n,
+        "n_docs_embedded": n_docs,
+        "n_claims": n_claims,
         "histogram": histogram,
         "similar_pairs": similar_pairs,
     }
@@ -108,12 +175,13 @@ def _embed_texts(texts, tokenizer, model, device: str, batch_size: int = 64):
         encoded = {k: v.to(device) for k, v in encoded.items()}
         with torch.no_grad():
             output = model(**encoded)
-        mask = encoded["attention_mask"].unsqueeze(-1).float()
-        pooled = (output.last_hidden_state * mask).sum(dim=1) / mask.sum(dim=1)
+        attn = encoded["attention_mask"].unsqueeze(-1).float()
+        pooled = (output.last_hidden_state * attn).sum(dim=1) / attn.sum(dim=1)
         pooled = F.normalize(pooled, p=2, dim=-1)
         all_embeddings.append(pooled.cpu())
         if (i // batch_size) % 5 == 0:
-            print(f"[embed]   {min(i + batch_size, len(texts))}/{len(texts)}", flush=True)
+            done = min(i + batch_size, len(texts))
+            print(f"[embed]   {done}/{len(texts)} docs", flush=True)
     return torch.cat(all_embeddings, dim=0)
 
 
@@ -134,7 +202,7 @@ def _build_histogram(upper_triangle) -> list[dict]:
 def _print_histogram(histogram: list[dict]) -> None:
     max_count = max(h["count"] for h in histogram) or 1
     bar_width = 40
-    print("\nCosine similarity distribution (pairwise upper triangle):")
+    print("\nDocument cosine similarity distribution (pairwise upper triangle):")
     print(f"  {'Bin':<14}  {'Count':>8}  Bar")
     print(f"  {'-'*14}  {'-'*8}  {'-'*bar_width}")
     for h in histogram:

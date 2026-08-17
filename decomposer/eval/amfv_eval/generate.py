@@ -141,32 +141,21 @@ def _any_too_similar(claims: list[ScifactClaim], threshold: float = 0.75) -> boo
     return False
 
 
-def _has_similar_embedding(
-    claims: list[ScifactClaim], similar_pairs: dict[int, frozenset[int]]
-) -> bool:
-    """Return True if any pair of claims are flagged as semantically similar."""
-    for i in range(len(claims)):
-        neighbors = similar_pairs.get(claims[i].id, frozenset())
-        for j in range(i + 1, len(claims)):
-            if claims[j].id in neighbors:
-                return True
-    return False
 
+def _has_shared_evidence_doc(claims: list[ScifactClaim]) -> bool:
+    """Return True if any two claims share at least one evidence document ID.
 
-def _has_conflicting_labels(claims: list[ScifactClaim]) -> bool:
-    """Return True if any two claims share a source document but have conflicting labels.
-
-    Fusing a SUPPORTED claim with a REFUTED/NEI claim on the same document
-    produces incoherent passages where the generator must quietly alter a fact
-    to resolve the contradiction.
+    Uses ``claim.evidence.keys()`` (docs with actual evidence sentences), not
+    ``cited_doc_ids`` (which is a superset and includes NEI candidate docs).
+    NEI claims have empty evidence and never trigger this filter.
     """
     for i in range(len(claims)):
+        evidence_docs_i = {int(k) for k in claims[i].evidence}
+        if not evidence_docs_i:
+            continue
         for j in range(i + 1, len(claims)):
-            a, b = claims[i], claims[j]
-            if set(a.cited_doc_ids) & set(b.cited_doc_ids):
-                labels = {a.label, b.label}
-                if "SUPPORTED" in labels and labels & {"REFUTED", "NEI"}:
-                    return True
+            if evidence_docs_i & {int(k) for k in claims[j].evidence}:
+                return True
     return False
 
 
@@ -299,6 +288,11 @@ def generate_split(
     if sum(weights) == 0:
         return []
 
+    # Flat lookup used in cross-group (similar_pairs) mode.
+    all_claims_flat = [c for g in groups for c in g.claims]
+    claim_by_id: dict[int, ScifactClaim] = {c.id: c for c in all_claims_flat}
+    all_claim_ids: list[int] = [c.id for c in all_claims_flat]
+
     examples: list[EvalExample] = []
     seen: set[str] = set()
     attempt_cap = target * 20
@@ -309,21 +303,47 @@ def generate_split(
         nonlocal attempts
         while attempts < attempt_cap:
             attempts += 1
-            group = rng.choices(groups, weights=weights, k=1)[0]
             n_ops = rng.choices(
                 list(_OP_COUNT_WEIGHTS.keys()),
                 weights=list(_OP_COUNT_WEIGHTS.values()),
                 k=1,
             )[0]
-            n_claims_needed = min(3, max(2, n_ops))
-            if len(group.claims) < n_claims_needed:
-                n_claims_needed = min(len(group.claims), 2)
-            sampled_claims = list(rng.sample(list(group.claims), n_claims_needed))
+
+            if similar_pairs is not None:
+                # Cross-group mode: anchor on a random claim, extend with
+                # similar neighbors that share no evidence document.
+                anchor = claim_by_id[rng.choice(all_claim_ids)]
+                neighbors = [
+                    claim_by_id[cid]
+                    for cid in similar_pairs.get(anchor.id, frozenset())
+                    if cid in claim_by_id
+                ]
+                # Keep only neighbors that don't share an evidence doc with anchor.
+                neighbors = [c for c in neighbors if not _has_shared_evidence_doc([anchor, c])]
+                if not neighbors:
+                    continue
+
+                if n_ops >= 3 and len(neighbors) >= 2:
+                    b = rng.choice(neighbors)
+                    # Third claim must not share evidence docs with either anchor or b.
+                    remaining = [
+                        c for c in neighbors
+                        if c.id != b.id and not _has_shared_evidence_doc([b, c])
+                    ]
+                    sampled_claims = [anchor, b, rng.choice(remaining)] if remaining else [anchor, b]
+                else:
+                    sampled_claims = [anchor, rng.choice(neighbors)]
+            else:
+                # Within-group mode: sample from a single connected component.
+                group = rng.choices(groups, weights=weights, k=1)[0]
+                n_claims_needed = min(3, max(2, n_ops))
+                if len(group.claims) < n_claims_needed:
+                    n_claims_needed = min(len(group.claims), 2)
+                sampled_claims = list(rng.sample(list(group.claims), n_claims_needed))
+                if _has_shared_evidence_doc(sampled_claims):
+                    continue
+
             if _any_too_similar(sampled_claims):
-                continue
-            if _has_conflicting_labels(sampled_claims):
-                continue
-            if similar_pairs is not None and _has_similar_embedding(sampled_claims, similar_pairs):
                 continue
             op_names = _sample_operators(rng, n_ops)
             dedup_key = json.dumps(
