@@ -110,8 +110,10 @@ def embed_and_find_similar(
     upper_docs = doc_sims[didx[0], didx[1]]
 
     histogram = _build_histogram(upper_docs)
+    histogram_zoomed = _build_zoomed_histogram(upper_docs)
     if print_histogram:
         _print_histogram(histogram)
+        _print_zoomed_histogram(histogram_zoomed)
 
     # ------------------------------------------------------------------
     # Translate doc-level similar pairs → claim-level similar_pairs (max)
@@ -155,6 +157,7 @@ def embed_and_find_similar(
         "n_docs_embedded": n_docs,
         "n_claims": n_claims,
         "histogram": histogram,
+        "histogram_zoomed": histogram_zoomed,
         "similar_pairs": similar_pairs,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -199,6 +202,20 @@ def _build_histogram(upper_triangle) -> list[dict]:
     return histogram
 
 
+def _build_zoomed_histogram(upper_triangle) -> list[dict]:
+    """15 bins of width 0.02 covering [0.7, 1.0]."""
+    bins = [round(0.7 + i * 0.02, 2) for i in range(16)]
+    histogram = []
+    for k in range(len(bins) - 1):
+        lo, hi = bins[k], bins[k + 1]
+        if k < len(bins) - 2:
+            count = int(((upper_triangle >= lo) & (upper_triangle < hi)).sum().item())
+        else:
+            count = int((upper_triangle >= lo).sum().item())
+        histogram.append({"bin": [lo, hi], "count": count})
+    return histogram
+
+
 def _print_histogram(histogram: list[dict]) -> None:
     max_count = max(h["count"] for h in histogram) or 1
     bar_width = 40
@@ -210,4 +227,18 @@ def _print_histogram(histogram: list[dict]) -> None:
         count = h["count"]
         bar = "█" * int(count / max_count * bar_width)
         print(f"  [{lo:+.1f}, {hi:+.1f})  {count:>8,}  {bar}")
+    print()
+
+
+def _print_zoomed_histogram(histogram: list[dict]) -> None:
+    max_count = max(h["count"] for h in histogram) or 1
+    bar_width = 40
+    print("Document cosine similarity distribution (> 0.70, bins of 0.02):")
+    print(f"  {'Bin':<16}  {'Count':>8}  Bar")
+    print(f"  {'-'*16}  {'-'*8}  {'-'*bar_width}")
+    for h in histogram:
+        lo, hi = h["bin"]
+        count = h["count"]
+        bar = "█" * int(count / max_count * bar_width)
+        print(f"  [{lo:.2f}, {hi:.2f})  {count:>8,}  {bar}")
     print()
