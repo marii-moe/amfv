@@ -10,10 +10,10 @@ cache_dir: cache/amfv_eval
 max_retries: 5  # OpenAI client retries on transient errors (SDK default: 2)
 partition: n       # GPU nodes
 cpu_partition: c   # CPU-only nodes (shard/merge jobs)
-account: training
+account: plus
 tensor_parallel: 2
-n_shards: 8
-max_gpus: 8  # caps concurrent array tasks: max_gpus / tensor_parallel = 4 shards at once
+n_shards: 4
+max_gpus: 2  # caps concurrent array tasks: max_gpus / tensor_parallel = 4 shards at once
 qos: normal  # default; override per-step below
 time_limit: "24:00:00"  # per-job wall time; override per-step if needed
 # vllm container image is set via VLLM_IMAGE env var (defaults to docker://vllm/vllm-openai:latest)
