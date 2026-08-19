@@ -23,7 +23,7 @@ time_limit: "24:00:00"  # per-job wall time; override per-step if needed
 
 embed_claims:
   model: almanach/ModernBERT-bio-large
-  threshold: 0.90
+  threshold: 0.92
   splits: [train, validation, test]
   out: similar_pairs.json
   print_histogram: true  # print to stdout in pipeline; histogram is always saved in the JSON
